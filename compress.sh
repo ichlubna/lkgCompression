@@ -1,6 +1,6 @@
 FFMPEG=ffmpeg
-VVCENC=./vvenc-master/bin/release-static/vvencapp
-VVCDEC=./vvdec-master/bin/release-static/vvdecapp
+VVCENC=./vvenc/bin/release-static/vvencapp
+VVCDEC=./vvdec/bin/release-static/vvdecapp
 MAGICK=magick
 ZIP=7z
 TEMP=$(mktemp -d)
@@ -38,6 +38,7 @@ FRONT_INPUT=front
 BACK_INPUT=back
 FULL_INPUT=full
 MASKS_INPUT=masks
+BLUR_INPUT=blurMasks
 
 BACK_COMP=$TEMP/compressedBack.266
 FRONT_COMP=$TEMP/compressedFront.266
@@ -70,6 +71,21 @@ for FILE in $BACK_DECOMP/*.png; do
 	$MAGICK composite $FRONT_DECOMP/$FILENAME $BACK_DECOMP/$FILENAME $MASKS_DECOMP/$FILENAME $MERGED_DECOMP/$FILENAME
 done
 
+#Parameters: input image, blur mask, output image
+function fakeDoF ()
+{
+	$MAGICK $1 $2 -compose blur -define compose:args=10 -composite $3
+}
+
+FULL_DOF=$TEMP/fullDoF
+mkdir $FULL_DOF
+for FILE in $FULL_INPUT/*.png; do
+	FILENAME=$(basename $FILE)
+	fakeDoF $MERGED_DECOMP/$FILENAME $BLUR_INPUT/$FILENAME $MERGED_DECOMP/$FILENAME
+	fakeDoF $FULL_DECOMP/$FILENAME $BLUR_INPUT/$FILENAME $FULL_DECOMP/$FILENAME
+	fakeDoF $FULL_INPUT/$FILENAME $BLUR_INPUT/$FILENAME $FULL_DOF/$FILENAME
+	
+done
 
 BLENDED_SPLIT_DECOMP=$TEMP/blendedDecompressed
 BLENDED_FULL_DECOMP=$TEMP/blendedFullDecompressed
@@ -84,32 +100,47 @@ for (( I=2; I<=$((COUNT-1)); I++ )); do
 	FILENAME_NEXT=$(printf "%04d\n" $((I+1))).png
 	$MAGICK $MERGED_DECOMP/$FILENAME_PREV $MERGED_DECOMP/$FILENAME_CUR $MERGED_DECOMP/$FILENAME_NEXT -evaluate-sequence Mean $BLENDED_SPLIT_DECOMP/$FILENAME_CUR
 	$MAGICK $FULL_DECOMP/$FILENAME_PREV $FULL_DECOMP/$FILENAME_CUR $FULL_DECOMP/$FILENAME_NEXT -evaluate-sequence Mean $BLENDED_FULL_DECOMP/$FILENAME_CUR
-	$MAGICK $FULL_INPUT/$FILENAME_PREV $FULL_INPUT/$FILENAME_CUR $FULL_INPUT/$FILENAME_NEXT -evaluate-sequence Mean $BLENDED_FULL/$FILENAME_CUR
+	$MAGICK $FULL_DOF/$FILENAME_PREV $FULL_DOF/$FILENAME_CUR $FULL_DOF/$FILENAME_NEXT -evaluate-sequence Mean $BLENDED_FULL/$FILENAME_CUR
 done
+BLENDED_ALL_SPLIT_DECOMP=$TEMP/blendedAllSplit.png
+BLENDED_ALL_FULL_DECOMP=$TEMP/blendedAllFullDecomp.png
+BLENDED_ALL_FULL=$TEMP/blendedAllFull.png
+TO_BLEND=$(find $MERGED_DECOMP/* -maxdepth 0 -printf "%p ")
+$MAGICK $TO_BLEND -evaluate-sequence Mean $BLENDED_ALL_SPLIT_DECOMP
+TO_BLEND=$(find $FULL_DECOMP/* -maxdepth 0 -printf "%p ")
+$MAGICK $TO_BLEND -evaluate-sequence Mean $BLENDED_ALL_FULL_DECOMP
+TO_BLEND=$(find $FULL_DOF/* -maxdepth 0 -printf "%p ")
+$MAGICK $TO_BLEND -evaluate-sequence Mean $BLENDED_ALL_FULL
 
+#Parameters: decompressed images, reference images
+function measureQuality ()
+{
+	RESULT=$(ffmpeg -i $1 -i $2 -filter_complex "psnr" -f null /dev/null 2>&1)
+	PSNR=$(echo "$RESULT" | grep -oP '(?<=average:).*?(?= min)')
+	echo $PSNR
+}
 
-RESULT=$(ffmpeg -i $FULL_DECOMP/%04d.png -i $FULL_INPUT/%04d.png -filter_complex "psnr" -f null /dev/null 2>&1)
-PSNR_FULL=$(echo "$RESULT" | grep -oP '(?<=average:).*?(?= min)')
-RESULT=$(ffmpeg -i $BLENDED_FULL_DECOMP/%04d.png -i $BLENDED_FULL/%04d.png -filter_complex "psnr" -f null /dev/null 2>&1)
-PSNR_BLENDED_FULL=$(echo "$RESULT" | grep -oP '(?<=average:).*?(?= min)')
-SIZE_FULL=$(stat --printf="%s" $FULL_COMP)
-RESULT=$(ffmpeg -i $MERGED_DECOMP/%04d.png -i $FULL_INPUT/%04d.png -filter_complex "psnr" -f null /dev/null 2>&1)
-PSNR_SPLIT=$(echo "$RESULT" | grep -oP '(?<=average:).*?(?= min)')
-RESULT=$(ffmpeg -i $BLENDED_SPLIT_DECOMP/%04d.png -i $BLENDED_FULL/%04d.png -filter_complex "psnr" -f null /dev/null 2>&1)
-PSNR_BLENDED_SPLIT=$(echo "$RESULT" | grep -oP '(?<=average:).*?(?= min)')
+echo "Results"
+echo "Full compression"
+echo -n "Size:"
+echo $(stat --printf="%s" $FULL_COMP)
+echo -n "Decoded:"
+measureQuality $FULL_DECOMP/%04d.png $FULL_DOF/%04d.png
+echo -n "Blended partially:"
+measureQuality $BLENDED_FULL_DECOMP/%04d.png $BLENDED_FULL/%04d.png
+echo -n "Blended all:"
+measureQuality $BLENDED_ALL_FULL_DECOMP $BLENDED_ALL_FULL
+
 ARCHIVE=$TEMP/archive.7z
 $ZIP a -m0=lzma2 -mx $ARCHIVE  $BACK_COMP $FRONT_COMP $MASKS_COMP
-SIZE_BACK=$(stat --printf="%s" $BACK_COMP)
-SIZE_FRONT=$(stat --printf="%s" $FRONT_COMP)
-SIZE_MASKS=$(stat --printf="%s" $MASKS_COMP)
-SIZE_ARCHIVE=$(stat --printf="%s" $ARCHIVE)
-echo "Full:"
-echo PSNR: $PSNR_FULL
-echo Blended PSNR: $PSNR_BLENDED_FULL
-echo Size: $SIZE_FULL
-echo "Split:"
-echo PSNR: $PSNR_SPLIT
-echo Blended PSNR: $PSNR_BLENDED_SPLIT
-echo Size: $((SIZE_BACK+SIZE_FRONT+SIZE_MASKS))
-echo Size zip: $SIZE_ARCHIVE
+echo "Adaptive compression"
+echo -n "Size:"
+echo $(stat --printf="%s" $ARCHIVE)
+echo -n "Decoded:"
+measureQuality $MERGED_DECOMP/%04d.png $FULL_DOF/%04d.png
+echo -n "Blended partially:"
+measureQuality $BLENDED_SPLIT_DECOMP/%04d.png $BLENDED_FULL/%04d.png
+echo -n "Blended all:"
+measureQuality $BLENDED_ALL_SPLIT_DECOMP $BLENDED_ALL_FULL
+
 rm -rf $TEMP
