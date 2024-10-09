@@ -9,7 +9,7 @@ MAGICK=magick
 ZIP=7z
 TEMP=$(mktemp -d)
 Q_FRONT=30
-Q_BACK=50
+Q_BACK=30
 Q_MASK=50
 BACK_FILTER="scale=iw*.5:ih*.5"
 
@@ -119,51 +119,72 @@ $MAGICK $TO_BLEND -evaluate-sequence Mean $BLENDED_ALL_FULL
 #Parameters: decompressed images, reference images
 function measureQuality ()
 {
-    INPUT_PATTERN=$1/%04d.png
-    REF_PATTERN=$2/%04d.png
+    if [[ -d $1 ]]; then
+        INPUT_PATTERN=$1/%04d.png
+        REF_PATTERN=$2/%04d.png
+        DISTS_VAL=0
+        LPIPS_VAL=0
+        for FILE in $1/*.png; do
+            FILENAME=$(basename $FILE)
+            cd $DISTS
+            CURRENT_VAL=$(python DISTS_pt.py --dist $1/$FILENAME --ref $2/$FILENAME)
+            DISTS_VAL=$(bc -l <<< "$DISTS_VAL + $CURRENT_VAL")
+            cd - > /dev/null 
+            cd $LPIPS
+            CURRENT_VAL=$(python lpips_2imgs.py -p0 $1/$FILENAME -p1 $2/$FILENAME)
+            CURRENT_VAL=$(printf '%s\n' "${CURRENT_VAL#*Distance: }")
+            LPIPS_VAL=$(bc -l <<< "$LPIPS_VAL + $CURRENT_VAL")
+            cd - > /dev/null 
+        done
+        DISTS_VAL=$(bc -l <<< "$DISTS_VAL/$COUNT")
+        LPIPS_VAL=$(bc -l <<< "$LPIPS_VAL/$COUNT")
+    else
+        INPUT_PATTERN=$1
+        REF_PATTERN=$2
+        cd $DISTS
+        DISTS_VAL=$(python DISTS_pt.py --dist $1 --ref $2)
+        cd -  > /dev/null
+        cd $LPIPS
+        LPIPS_VAL=$(python lpips_2imgs.py -p0 $1 -p1 $2)
+        LPIPS_VAL=$(printf '%s\n' "${LPIPS_VAL#*Distance: }")
+        cd -  > /dev/null
+    fi 
 	RESULT=$(ffmpeg -i $INPUT_PATTERN -i $REF_PATTERN -filter_complex "psnr" -f null /dev/null 2>&1)
 	PSNR=$(echo "$RESULT" | grep -oP '(?<=average:).*?(?= min)')
     RESULT=$($FFMPEG -i $INPUT_PATTERN -i $REF_PATTERN -filter_complex "ssim" -f null /dev/null 2>&1)
     SSIM=$(echo "$RESULT" | grep -oP '(?<=All:).*?(?= )')
     RESULT=$($FFMPEG -i $INPUT_PATTERN -i $REF_PATTERN -lavfi libvmaf -f null /dev/null 2>&1)
     VMAF=$(echo "$RESULT" | grep -oP '(?<=VMAF score: ).*')
-    cd $DISTS
-    DISTS_VAL=0
-    for FILE in $FULL_INPUT/*.png; do
-	    FILENAME=$(basename $FILE)
-        CURRENT_VAL=$(python DISTS_pt.py --dist $1/$FILENAME --ref $TEMP/$FILENAME)
-        DISTS_VAL=$(bc -l <<< "$DISTS_VAL + $CURRENT_VAL")
-    done
-    DISTS_VAL=$(bc -l <<< "$DISTS_VAL/$COUNT")
-    cd -   
-    cd $LPIPS
-    LPIPS_VAL=$(python lpips_2imgs.py -d0 $1 -d1 $2)
-    LPIPS_VAL=$(printf '%s\n' "${LPIPS_VAL#*Distance: }")
-    cd - 
 	echo $PSNR $SSIM $VMAF $DISTS_VAL $LPIPS_VAL
 }
 
+QUALITY_DECODED=$(measureQuality $FULL_DECOMP $FULL_DOF)
+QUALITY_BLENDED_PARTIAL=$(measureQuality $BLENDED_FULL_DECOMP $BLENDED_FULL)
+QUALITY_BLENDED_ALL=$(measureQuality $BLENDED_ALL_FULL_DECOMP $BLENDED_ALL_FULL)
+QUALITY_DECODED_ADA=$(measureQuality $MERGED_DECOMP $FULL_DOF)
+QUALITY_BLENDED_PARTIAL_ADA=$(measureQuality $BLENDED_SPLIT_DECOMP $BLENDED_FULL)
+QUALITY_BLENDED_ALL_ADA=$(measureQuality $BLENDED_ALL_SPLIT_DECOMP $BLENDED_ALL_FULL)
+ARCHIVE=$TEMP/archive.7z
+$ZIP a -m0=lzma2 -mx $ARCHIVE  $BACK_COMP $FRONT_COMP $MASKS_COMP
 echo "Results"
 echo "Full compression"
 echo -n "Size:"
 echo $(stat --printf="%s" $FULL_COMP)
 echo -n "Decoded:"
-measureQuality $FULL_DECOMP/%04d.png $FULL_DOF/%04d.png
+echo $QUALITY_DECODED
 echo -n "Blended partially:"
-measureQuality $BLENDED_FULL_DECOMP/%04d.png $BLENDED_FULL/%04d.png
+echo $QUALITY_BLENDED_PARTIAL
 echo -n "Blended all:"
-measureQuality $BLENDED_ALL_FULL_DECOMP $BLENDED_ALL_FULL
+echo $QUALITY_BLENDED_ALL
 
-ARCHIVE=$TEMP/archive.7z
-$ZIP a -m0=lzma2 -mx $ARCHIVE  $BACK_COMP $FRONT_COMP $MASKS_COMP
 echo "Adaptive compression"
 echo -n "Size:"
 echo $(stat --printf="%s" $ARCHIVE)
 echo -n "Decoded:"
-measureQuality $MERGED_DECOMP/%04d.png $FULL_DOF/%04d.png
+echo $QUALITY_DECODED_ADA
 echo -n "Blended partially:"
-measureQuality $BLENDED_SPLIT_DECOMP/%04d.png $BLENDED_FULL/%04d.png
+echo $QUALITY_BLENDED_PARTIAL_ADA
 echo -n "Blended all:"
-measureQuality $BLENDED_ALL_SPLIT_DECOMP $BLENDED_ALL_FULL
+echo $QUALITY_BLENDED_ALL_ADA
 
 rm -rf $TEMP
