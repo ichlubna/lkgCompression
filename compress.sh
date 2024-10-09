@@ -1,6 +1,10 @@
 FFMPEG=ffmpeg
 VVCENC=./vvenc/bin/release-static/vvencapp
 VVCDEC=./vvdec/bin/release-static/vvdecapp
+# https://github.com/richzhang/PerceptualSimilarity
+LPIPS=/home/ichlubna/Workspace/PerceptualSimilarity/
+# https://github.com/dingkeyan93/DISTS
+DISTS=/home/ichlubna//Workspace/DISTS/DISTS_pytorch/
 MAGICK=magick
 ZIP=7z
 TEMP=$(mktemp -d)
@@ -9,6 +13,7 @@ Q_BACK=50
 Q_MASK=50
 BACK_FILTER="scale=iw*.5:ih*.5"
 
+#Parameters: input, output
 function compressFront ()
 {
 	$FFMPEG -y -i $1 -pix_fmt yuv420p $TEMP/temp.y4m
@@ -84,7 +89,6 @@ for FILE in $FULL_INPUT/*.png; do
 	fakeDoF $MERGED_DECOMP/$FILENAME $BLUR_INPUT/$FILENAME $MERGED_DECOMP/$FILENAME
 	fakeDoF $FULL_DECOMP/$FILENAME $BLUR_INPUT/$FILENAME $FULL_DECOMP/$FILENAME
 	fakeDoF $FULL_INPUT/$FILENAME $BLUR_INPUT/$FILENAME $FULL_DOF/$FILENAME
-	
 done
 
 BLENDED_SPLIT_DECOMP=$TEMP/blendedDecompressed
@@ -115,9 +119,28 @@ $MAGICK $TO_BLEND -evaluate-sequence Mean $BLENDED_ALL_FULL
 #Parameters: decompressed images, reference images
 function measureQuality ()
 {
-	RESULT=$(ffmpeg -i $1 -i $2 -filter_complex "psnr" -f null /dev/null 2>&1)
+    INPUT_PATTERN=$1/%04d.png
+    REF_PATTERN=$2/%04d.png
+	RESULT=$(ffmpeg -i $INPUT_PATTERN -i $REF_PATTERN -filter_complex "psnr" -f null /dev/null 2>&1)
 	PSNR=$(echo "$RESULT" | grep -oP '(?<=average:).*?(?= min)')
-	echo $PSNR
+    RESULT=$($FFMPEG -i $INPUT_PATTERN -i $REF_PATTERN -filter_complex "ssim" -f null /dev/null 2>&1)
+    SSIM=$(echo "$RESULT" | grep -oP '(?<=All:).*?(?= )')
+    RESULT=$($FFMPEG -i $INPUT_PATTERN -i $REF_PATTERN -lavfi libvmaf -f null /dev/null 2>&1)
+    VMAF=$(echo "$RESULT" | grep -oP '(?<=VMAF score: ).*')
+    cd $DISTS
+    DISTS_VAL=0
+    for FILE in $FULL_INPUT/*.png; do
+	    FILENAME=$(basename $FILE)
+        CURRENT_VAL=$(python DISTS_pt.py --dist $1/$FILENAME --ref $TEMP/$FILENAME)
+        DISTS_VAL=$(bc -l <<< "$DISTS_VAL + $CURRENT_VAL")
+    done
+    DISTS_VAL=$(bc -l <<< "$DISTS_VAL/$COUNT")
+    cd -   
+    cd $LPIPS
+    LPIPS_VAL=$(python lpips_2imgs.py -d0 $1 -d1 $2)
+    LPIPS_VAL=$(printf '%s\n' "${LPIPS_VAL#*Distance: }")
+    cd - 
+	echo $PSNR $SSIM $VMAF $DISTS_VAL $LPIPS_VAL
 }
 
 echo "Results"
