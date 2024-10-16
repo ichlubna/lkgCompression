@@ -6,12 +6,12 @@ LPIPS=/home/ichlubna/Workspace/PerceptualSimilarity/
 # https://github.com/dingkeyan93/DISTS
 DISTS=/home/ichlubna//Workspace/DISTS/DISTS_pytorch/
 # https://github.com/ichlubna/DoFFromDepthMap
-DOF=/home/ichlubna/Workspace/DoFFromDepthMap/build/DoFFromDepthMap
+DOF=/home/ichlubna/Workspace/DoFFromDepthMap/build/
 MAGICK=magick
 ZIP=7z
 TEMP=$(mktemp -d)
-FOCUS_DISTANCE=0.1
-FOCUS_BOUNDS=0.1
+DOF_FOCUS_DISTANCE=0.15
+DOF_FOCUS_BOUNDS=0.0
 DOF_STRENGTH=50
 Q_FRONT=30
 Q_BACK=40
@@ -90,7 +90,12 @@ done
 #Parameters: input image, depth map, output image
 function fakeDoF ()
 {
-    $DOF -i $1 -d $2 -o $3 -f $FOCUS_DISTANCE -b $FOCUS_BOUNDS -s $DOF_STRENGTH
+    DOF_IN=$(realpath $1)
+    DOF_DEPTH=$(realpath $2)
+    DOF_OUT=$(realpath $3)
+    cd $DOF  
+    ./DoFFromDepthMap -i $DOF_IN -d $DOF_DEPTH -o $DOF_OUT -f $DOF_FOCUS_DISTANCE -b $DOF_FOCUS_BOUNDS -s $DOF_STRENGTH
+    cd -
 	#$MAGICK $1 $2 -compose blur -define compose:args=10 -composite $3
 }
 
@@ -98,9 +103,10 @@ FULL_DOF=$TEMP/fullDoF
 mkdir $FULL_DOF
 for FILE in $FULL_INPUT/*.png; do
 	FILENAME=$(basename $FILE)
-	fakeDoF $MERGED_DECOMP/$FILENAME $DEPTH_INPUT/$FILENAME $MERGED_DECOMP/$FILENAME
-	fakeDoF $FULL_DECOMP/$FILENAME $DEPTH_INPUT/$FILENAME $FULL_DECOMP/$FILENAME
-	fakeDoF $FULL_INPUT/$FILENAME $DEPTH_INPUT/$FILENAME $FULL_DOF/$FILENAME
+    FILENAME_NO_EXT="${FILENAME%.*}"
+	fakeDoF $MERGED_DECOMP/$FILENAME $DEPTH_INPUT/$FILENAME_NO_EXT.hdr $MERGED_DECOMP/$FILENAME
+	fakeDoF $FULL_DECOMP/$FILENAME $DEPTH_INPUT/$FILENAME_NO_EXT.hdr $FULL_DECOMP/$FILENAME
+	fakeDoF $FULL_INPUT/$FILENAME $DEPTH_INPUT/$FILENAME_NO_EXT.hdr $FULL_DOF/$FILENAME
 done
 
 ADAPTIVE_QUILT=./adaptiveCompressonQuilt_qs8x6a0.75.png
