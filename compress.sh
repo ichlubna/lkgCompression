@@ -5,13 +5,24 @@ VVCDEC=./vvdec/bin/release-static/vvdecapp
 LPIPS=/home/ichlubna/Workspace/PerceptualSimilarity/
 # https://github.com/dingkeyan93/DISTS
 DISTS=/home/ichlubna//Workspace/DISTS/DISTS_pytorch/
+# https://github.com/ichlubna/DoFFromDepthMap
+DOF=/home/ichlubna/Workspace/DoFFromDepthMap/build/DoFFromDepthMap
 MAGICK=magick
 ZIP=7z
 TEMP=$(mktemp -d)
+FOCUS_DISTANCE=0.1
+FOCUS_BOUNDS=0.1
+DOF_STRENGTH=50
 Q_FRONT=30
-Q_BACK=30
+Q_BACK=40
 Q_MASK=50
+FULL_MEASURE=0
 BACK_FILTER="scale=iw*.5:ih*.5"
+if [[ $# -eq 0 ]]; then
+    QUILT_ONLY=0
+else
+    QUILT_ONLY=$1
+fi
 
 #Parameters: input, output
 function compressFront ()
@@ -43,7 +54,7 @@ FRONT_INPUT=front
 BACK_INPUT=back
 FULL_INPUT=full
 MASKS_INPUT=masks
-BLUR_INPUT=blurMasks
+DEPTH_INPUT=depth
 
 BACK_COMP=$TEMP/compressedBack.266
 FRONT_COMP=$TEMP/compressedFront.266
@@ -76,20 +87,33 @@ for FILE in $BACK_DECOMP/*.png; do
 	$MAGICK composite $FRONT_DECOMP/$FILENAME $BACK_DECOMP/$FILENAME $MASKS_DECOMP/$FILENAME $MERGED_DECOMP/$FILENAME
 done
 
-#Parameters: input image, blur mask, output image
+#Parameters: input image, depth map, output image
 function fakeDoF ()
 {
-	$MAGICK $1 $2 -compose blur -define compose:args=10 -composite $3
+    $DOF -i $1 -d $2 -o $3 -f $FOCUS_DISTANCE -b $FOCUS_BOUNDS -s $DOF_STRENGTH
+	#$MAGICK $1 $2 -compose blur -define compose:args=10 -composite $3
 }
 
 FULL_DOF=$TEMP/fullDoF
 mkdir $FULL_DOF
 for FILE in $FULL_INPUT/*.png; do
 	FILENAME=$(basename $FILE)
-	fakeDoF $MERGED_DECOMP/$FILENAME $BLUR_INPUT/$FILENAME $MERGED_DECOMP/$FILENAME
-	fakeDoF $FULL_DECOMP/$FILENAME $BLUR_INPUT/$FILENAME $FULL_DECOMP/$FILENAME
-	fakeDoF $FULL_INPUT/$FILENAME $BLUR_INPUT/$FILENAME $FULL_DOF/$FILENAME
+	fakeDoF $MERGED_DECOMP/$FILENAME $DEPTH_INPUT/$FILENAME $MERGED_DECOMP/$FILENAME
+	fakeDoF $FULL_DECOMP/$FILENAME $DEPTH_INPUT/$FILENAME $FULL_DECOMP/$FILENAME
+	fakeDoF $FULL_INPUT/$FILENAME $DEPTH_INPUT/$FILENAME $FULL_DOF/$FILENAME
 done
+
+ADAPTIVE_QUILT=./adaptiveCompressonQuilt_qs8x6a0.75.png
+$MAGICK montage $MERGED_DECOMP/*.png -tile 8x6 -geometry 420x560+0+0 $ADAPTIVE_QUILT
+$MAGICK $ADAPTIVE_QUILT -flop $ADAPTIVE_QUILT
+STANDARD_QUILT=./standardCompressonQuilt_qs8x6a0.75.png
+$MAGICK montage $FULL_DECOMP/*.png -tile 8x6 -geometry 420x560+0+0 $STANDARD_QUILT
+$MAGICK $STANDARD_QUILT -flop $STANDARD_QUILT
+
+if [[ $QUILT_ONLY -eq 1 ]]; then
+	rm -rf $TEMP
+	exit 0
+fi
 
 BLENDED_SPLIT_DECOMP=$TEMP/blendedDecompressed
 BLENDED_FULL_DECOMP=$TEMP/blendedFullDecompressed
@@ -119,42 +143,51 @@ $MAGICK $TO_BLEND -evaluate-sequence Mean $BLENDED_ALL_FULL
 #Parameters: decompressed images, reference images
 function measureQuality ()
 {
+    DISTS_VAL=0
+    LPIPS_VAL=0
+    PSNR=0
+    SSIM=0
+    VMAF=0
     if [[ -d $1 ]]; then
         INPUT_PATTERN=$1/%04d.png
         REF_PATTERN=$2/%04d.png
-        DISTS_VAL=0
-        LPIPS_VAL=0
-        for FILE in $1/*.png; do
-            FILENAME=$(basename $FILE)
-            cd $DISTS
-            CURRENT_VAL=$(python DISTS_pt.py --dist $1/$FILENAME --ref $2/$FILENAME)
-            DISTS_VAL=$(bc -l <<< "$DISTS_VAL + $CURRENT_VAL")
-            cd - > /dev/null 
-            cd $LPIPS
-            CURRENT_VAL=$(python lpips_2imgs.py -p0 $1/$FILENAME -p1 $2/$FILENAME)
-            CURRENT_VAL=$(printf '%s\n' "${CURRENT_VAL#*Distance: }")
-            LPIPS_VAL=$(bc -l <<< "$LPIPS_VAL + $CURRENT_VAL")
-            cd - > /dev/null 
-        done
-        DISTS_VAL=$(bc -l <<< "$DISTS_VAL/$COUNT")
-        LPIPS_VAL=$(bc -l <<< "$LPIPS_VAL/$COUNT")
+        if [[ $FULL_MEASURE -eq 1 ]]; then
+            for FILE in $1/*.png; do
+                FILENAME=$(basename $FILE)
+                cd $DISTS
+                CURRENT_VAL=$(python DISTS_pt.py --dist $1/$FILENAME --ref $2/$FILENAME)
+                DISTS_VAL=$(bc -l <<< "$DISTS_VAL + $CURRENT_VAL")
+                cd - > /dev/null 
+                cd $LPIPS
+                CURRENT_VAL=$(python lpips_2imgs.py -p0 $1/$FILENAME -p1 $2/$FILENAME)
+                CURRENT_VAL=$(printf '%s\n' "${CURRENT_VAL#*Distance: }")
+                LPIPS_VAL=$(bc -l <<< "$LPIPS_VAL + $CURRENT_VAL")
+                cd - > /dev/null 
+            done
+            DISTS_VAL=$(bc -l <<< "$DISTS_VAL/$COUNT")
+            LPIPS_VAL=$(bc -l <<< "$LPIPS_VAL/$COUNT")
+        fi
     else
         INPUT_PATTERN=$1
         REF_PATTERN=$2
-        cd $DISTS
-        DISTS_VAL=$(python DISTS_pt.py --dist $1 --ref $2)
-        cd -  > /dev/null
-        cd $LPIPS
-        LPIPS_VAL=$(python lpips_2imgs.py -p0 $1 -p1 $2)
-        LPIPS_VAL=$(printf '%s\n' "${LPIPS_VAL#*Distance: }")
-        cd -  > /dev/null
+        if [[ $FULL_MEASURE -eq 1 ]]; then
+            cd $DISTS
+            DISTS_VAL=$(python DISTS_pt.py --dist $1 --ref $2)
+            cd -  > /dev/null
+            cd $LPIPS
+            LPIPS_VAL=$(python lpips_2imgs.py -p0 $1 -p1 $2)
+            LPIPS_VAL=$(printf '%s\n' "${LPIPS_VAL#*Distance: }")
+            cd -  > /dev/null
+        fi
     fi 
 	RESULT=$(ffmpeg -i $INPUT_PATTERN -i $REF_PATTERN -filter_complex "psnr" -f null /dev/null 2>&1)
 	PSNR=$(echo "$RESULT" | grep -oP '(?<=average:).*?(?= min)')
-    RESULT=$($FFMPEG -i $INPUT_PATTERN -i $REF_PATTERN -filter_complex "ssim" -f null /dev/null 2>&1)
-    SSIM=$(echo "$RESULT" | grep -oP '(?<=All:).*?(?= )')
-    RESULT=$($FFMPEG -i $INPUT_PATTERN -i $REF_PATTERN -lavfi libvmaf -f null /dev/null 2>&1)
-    VMAF=$(echo "$RESULT" | grep -oP '(?<=VMAF score: ).*')
+    if [[ $FULL_MEASURE -eq 1 ]]; then
+        RESULT=$($FFMPEG -i $INPUT_PATTERN -i $REF_PATTERN -filter_complex "ssim" -f null /dev/null 2>&1)
+        SSIM=$(echo "$RESULT" | grep -oP '(?<=All:).*?(?= )')
+        RESULT=$($FFMPEG -i $INPUT_PATTERN -i $REF_PATTERN -lavfi libvmaf -f null /dev/null 2>&1)
+        VMAF=$(echo "$RESULT" | grep -oP '(?<=VMAF score: ).*')
+    fi
 	echo $PSNR $SSIM $VMAF $DISTS_VAL $LPIPS_VAL
 }
 
