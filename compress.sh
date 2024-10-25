@@ -141,7 +141,7 @@ mkdir $BLENDED_FULL_DECOMP
 mkdir $BLENDED_FULL
 COUNT=$(ls -1q $FULL_DECOMP/*.png | wc -l)
 IMG_ID=1
-for (( WIN=3; WIN<=10; WIN++ )); do
+for (( WIN=5; WIN<=10; WIN++ )); do
 for (( START=0; START<$((COUNT-WIN)); START++ )); do
 FILENAMES_MERGED_DECOMP=""
 FILENAMES_FULL_DECOMP=""
