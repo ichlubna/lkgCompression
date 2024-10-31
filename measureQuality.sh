@@ -1,5 +1,4 @@
 #!/bin/bash
-set -x
 TEMP=$(mktemp -d)
 FFMPEG=ffmpeg
 # https://github.com/richzhang/PerceptualSimilarity
@@ -48,7 +47,6 @@ function measureSingle ()
         NIQSV_VAL=$($NIQSV/exercise $FIRST_FILE_PNG)
         NIQSV_VAL=$(grep -oP '(?<=Score: ).*' <<< "$NIQSV_VAL")
         cd $LIQE
-        $FFMPEG -y -i $FIRST_FILE -pix_fmt rgb24 $TEMP_IMAGE
         LIQE_VAL=$(python demo2.py $FIRST_FILE_PNG) 
         cd - > /dev/null 
         LIQE_VAL=$(grep -oP '(?<=quality of).*?(?=as quantified)' <<< "$LIQE_VAL")
@@ -66,7 +64,6 @@ function measureQuality ()
     SSIM_VAL=0
     VMAF_VAL=0
 
-    TEMP_IMAGE=$TEMP/tempMeasurement.png
     if [[ -d $1 ]]; then
         for FILE in $1/*.png; do
             TRIM_FILE=$(basename $FILE)
@@ -77,9 +74,9 @@ function measureQuality ()
         LPIPS_VAL=$(bc -l <<< "$LPIPS_VAL/$COUNT")
         NIQSV_VAL=$(bc -l <<< "$NIQSV_VAL/$COUNT")
         LIQE_VAL=$(bc -l <<< "$LIQE_VAL/$COUNT")
-        PSNR=$(bc -l <<< "$PSNR/$COUNT")
-        SSIM=$(bc -l <<< "$SSIM/$COUNT")
-        VMAF=$(bc -l <<< "$VMAF/$COUNT")
+        PSNR_VAL=$(bc -l <<< "$PSNR_VAL/$COUNT")
+        SSIM_VAL=$(bc -l <<< "$SSIM_VAL/$COUNT")
+        VMAF_VAL=$(bc -l <<< "$VMAF_VAL/$COUNT")
     else
         measureSingle $1 $2
     fi 

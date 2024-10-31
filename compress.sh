@@ -19,11 +19,8 @@ FULL_MEASURE=0
 BACK_FILTER=""
 BACK_FILTER_REVERSE=""
 ENCODER_OPTIONS="-rs 2 -c yuv420 --preset medium --qpa 1"
-if [[ $# -eq 0 ]]; then
-    QUILT_ONLY=0
-else
-    QUILT_ONLY=$1
-fi
+QUILT_ONLY=0
+INPUT_PATH=$1
 
 #Parameters: input, output
 function compressFull ()
@@ -62,11 +59,11 @@ function decompressBack ()
 	$FFMPEG -y -strict -2 -i $1 $BACK_FILTER_REVERSE $2
 }
 
-FRONT_INPUT=front
-BACK_INPUT=back
-FULL_INPUT=full
-MASKS_INPUT=masks
-DEPTH_INPUT=depth
+FRONT_INPUT=$INPUT_PATH/front
+BACK_INPUT=$INPUT_PATH/back
+FULL_INPUT=$INPUT_PATH/full
+MASKS_INPUT=$INPUT_PATH/masks
+DEPTH_INPUT=$INPUT_PATH/depth
 
 BACK_COMP=$TEMP/compressedBack.mkv
 FRONT_COMP=$TEMP/compressedFront.mkv
@@ -121,12 +118,15 @@ for FILE in $FULL_INPUT/*.png; do
 	fakeDoF $FULL_INPUT/$FILENAME $DEPTH_INPUT/$FILENAME_NO_EXT.hdr $FULL_DOF/$FILENAME
 done
 
-ADAPTIVE_QUILT=./adaptiveCompressonQuilt_qs8x6a0.75.png
+ADAPTIVE_QUILT=./adaptiveCompressionQuilt_qs8x6a0.75.png
 $MAGICK montage $MERGED_DECOMP/*.png -tile 8x6 -geometry 420x560+0+0 $ADAPTIVE_QUILT
 $MAGICK $ADAPTIVE_QUILT -flop $ADAPTIVE_QUILT
-STANDARD_QUILT=./standardCompressonQuilt_qs8x6a0.75.png
+STANDARD_QUILT=./standardCompressionQuilt_qs8x6a0.75.png
 $MAGICK montage $FULL_DECOMP/*.png -tile 8x6 -geometry 420x560+0+0 $STANDARD_QUILT
 $MAGICK $STANDARD_QUILT -flop $STANDARD_QUILT
+FULL_QUILT=./noCompressionQuilt_qs8x6a0.75.png
+$MAGICK montage $FULL_DOF/*.png -tile 8x6 -geometry 420x560+0+0 $FULL_QUILT
+$MAGICK $FULL_QUILT -flop $FULL_QUILT
 
 if [[ $QUILT_ONLY -eq 1 ]]; then
 	rm -rf $TEMP
@@ -160,10 +160,10 @@ $MAGICK $FILENAMES_FULL -evaluate-sequence Mean $BLENDED_FULL/$BLENDED_FILENAME_
 done
 done
 
-QUALITY_DECODED=$(./measureQuality $FULL_DECOMP $FULL_DOF $FULL_MEASURE)
-QUALITY_BLENDED=$(./measureQuality $BLENDED_FULL_DECOMP $BLENDED_FULL $FULL_MEASURE)
-QUALITY_DECODED_ADA=$(./measureQuality $MERGED_DECOMP $FULL_DOF $FULL_MEASURE)
-QUALITY_BLENDED_ADA=$(./measureQuality $BLENDED_SPLIT_DECOMP $BLENDED_FULL $FULL_MEASURE)
+QUALITY_DECODED=$(./measureQuality.sh $FULL_DECOMP $FULL_DOF $FULL_MEASURE)
+QUALITY_BLENDED=$(./measureQuality.sh $BLENDED_FULL_DECOMP $BLENDED_FULL $FULL_MEASURE)
+QUALITY_DECODED_ADA=$(./measureQuality.sh $MERGED_DECOMP $FULL_DOF $FULL_MEASURE)
+QUALITY_BLENDED_ADA=$(./measureQuality.sh $BLENDED_SPLIT_DECOMP $BLENDED_FULL $FULL_MEASURE)
 ARCHIVE=$TEMP/archive.7z
 $ZIP a -m0=lzma2 -mx $ARCHIVE $BACK_COMP $FRONT_COMP $MASKS_COMP
 echo "Results"
