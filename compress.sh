@@ -19,7 +19,7 @@ FULL_MEASURE=0
 BACK_FILTER=""
 BACK_FILTER_REVERSE=""
 ENCODER_OPTIONS="-rs 2 -c yuv420 --preset medium --qpa 1"
-QUILT_ONLY=0
+QUILT_ONLY=1
 INPUT_PATH=$1
 
 #Parameters: input, output

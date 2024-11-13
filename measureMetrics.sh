@@ -13,8 +13,7 @@ mkdir -p $BLENDED
 BLENDED_DECOMP=$TEMP/blendedDecomp
 mkdir -p $BLENDED_DECOMP
 
-#for CRF in 0 9 18 27 36 45 54; do 
-for CRF in 9; do 
+for CRF in 0 9 18 27 36 45 54; do 
 	$FFMPEG -y -i $INPUT/%04d.png -pix_fmt yuv420p $TEMP/temp.y4m
     rm -f $TEMP/temp.266
 	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS -q $CRF -o $TEMP/temp.266
