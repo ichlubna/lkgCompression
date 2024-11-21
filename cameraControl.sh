@@ -6,7 +6,7 @@ if [ $1 == "wake" ]; then
         adb shell input keyevent KEYCODE_POWER
     fi
 elif [ $1 == "shoot" ]; then
-    adb shell "input tap 500 300"
+    adb shell "input tap 750 350"
     sleep 1
     adb shell "input tap 1100 200"
 elif [ $1 == "get" ]; then

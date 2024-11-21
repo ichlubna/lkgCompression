@@ -14,7 +14,7 @@ fi
 
 darktable-cli $FIRST $XMP_FILE $TEMP/photo1.exr --core --conf plugins/imageio/format/exr/compression=0 1>&2
 darktable-cli $SECOND $XMP_FILE $TEMP/photo2.exr --core --conf plugins/imageio/format/exr/compression=0 1>&2
-./measureQuality.sh $TEMP/photo1.exr $TEMP/photo2.exr 0
+./measureQuality.sh $TEMP/photo1.exr $TEMP/photo2.exr 1
 cp $TEMP/photo1.exr ./photo1.exr
 cp $TEMP/photo2.exr ./photo2.exr
 rm -rf $TEMP
