@@ -1,10 +1,12 @@
+set -x
 #!/bin/bash
 FFMPEG=ffmpeg
 MAGICK=magick
 VVCENC=./vvenc/bin/release-static/vvencapp
 VVCDEC=./vvdec/bin/release-static/vvdecapp
 DOF=/home/ichlubna/Workspace/DoFFromDepthMap/build/
-ZIP=7z
+BZIP=bzip3
+TAR=tar
 TEMP=$(mktemp -d)
 DOF_FOCUS_DISTANCE=0.15
 DOF_FOCUS_BOUNDS=0.0
@@ -19,7 +21,7 @@ FULL_MEASURE=0
 BACK_FILTER=""
 BACK_FILTER_REVERSE=""
 ENCODER_OPTIONS="-rs 2 -c yuv420 --preset medium --qpa 1"
-QUILT_ONLY=1
+QUILT_ONLY=0
 INPUT_PATH=$1
 
 #Parameters: input, output
@@ -147,8 +149,10 @@ QUALITY_DECODED=$(./measureQuality.sh $FULL_DECOMP $FULL_DOF $FULL_MEASURE)
 QUALITY_BLENDED=$(./measureQuality.sh $BLENDED_FULL_DECOMP $BLENDED_FULL $FULL_MEASURE)
 QUALITY_DECODED_ADA=$(./measureQuality.sh $MERGED_DECOMP $FULL_DOF $FULL_MEASURE)
 QUALITY_BLENDED_ADA=$(./measureQuality.sh $BLENDED_SPLIT_DECOMP $BLENDED_FULL $FULL_MEASURE)
-ARCHIVE=$TEMP/archive.7z
-$ZIP a -m0=lzma2 -mx $ARCHIVE $BACK_COMP $FRONT_COMP $MASKS_COMP
+ARCHIVEA=$TEMP/archiveA.tar
+ARCHIVE=$TEMP/archive.tar
+$TAR -cvf $ARCHIVEA $BACK_COMP $FRONT_COMP $MASKS_COMP
+$BZIP -e -b 511 $ARCHIVEA $ARCHIVE
 echo "Results"
 echo "Full compression"
 echo -n "Size:"

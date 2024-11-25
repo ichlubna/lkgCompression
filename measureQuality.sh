@@ -44,12 +44,14 @@ function measureSingle ()
         CURRENT_VAL=$(printf '%.10f' $CURRENT_VAL)
         LPIPS_VAL=$(bc -l <<< "$LPIPS_VAL + $CURRENT_VAL")
         cd - > /dev/null 
-        NIQSV_VAL=$($NIQSV/exercise $FIRST_FILE_PNG)
-        NIQSV_VAL=$(grep -oP '(?<=Score: ).*' <<< "$NIQSV_VAL")
+        CURRENT_VAL=$($NIQSV/exercise $FIRST_FILE_PNG)
+        CURRENT_VAL=$(grep -oP '(?<=Score: ).*' <<< "$CURRENT_VAL")
+        NIQSV_VAL=$(bc -l <<< "$NIQSV_VAL + $CURRENT_VAL")
         cd $LIQE
-        LIQE_VAL=$(python demo2.py $FIRST_FILE_PNG) 
+        CURRENT_VAL=$(python demo2.py $FIRST_FILE_PNG) 
         cd - > /dev/null 
-        LIQE_VAL=$(grep -oP '(?<=quality of).*?(?=as quantified)' <<< "$LIQE_VAL")
+        CURRENT_VAL=$(grep -oP '(?<=quality of).*?(?=as quantified)' <<< "$CURRENT_VAL")
+        LIQE_VAL=$(bc -l <<< "$LIQE_VAL + $CURRENT_VAL")
     fi
 }
 
@@ -58,7 +60,7 @@ function measureQuality ()
 {
     DISTS_VAL=0
     LPIPS_VAL=0
-    NISQ_VAL=0
+    NIQSV_VAL=0
     LIQE_VAL=0
     PSNR_VAL=0
     SSIM_VAL=0
