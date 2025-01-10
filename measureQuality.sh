@@ -20,19 +20,19 @@ function measureSingle ()
     SECOND_FILE_PNG=$TEMP/second.png
     $FFMPEG -y -i $FIRST_FILE -pix_fmt rgb48be $FIRST_FILE_PNG
     $FFMPEG -y -i $SECOND_FILE -pix_fmt rgb48be $SECOND_FILE_PNG
-	RESULT=$($FFMPEG -i $FIRST_FILE -i $SECOND_FILE -filter_complex "psnr" -f null /dev/null 2>&1)
-	PSNR=$(echo "$RESULT" | grep -oP '(?<=average:).*?(?= min)')
-    if [ $PSNR == "inf" ]; then
-        PSNR=100
-    fi
-    PSNR_VAL=$(bc -l <<< "$PSNR_VAL + $PSNR")
+    RESULT=$($FFMPEG -i $FIRST_FILE -i $SECOND_FILE -lavfi libvmaf -f null /dev/null 2>&1)
+    VMAF=$(echo "$RESULT" | grep -oP '(?<=VMAF score: ).*')
+    VMAF_VAL=$(bc -l <<< "$VMAF_VAL + $VMAF")
     if [[ $FULL_MEASURE -eq 1 ]]; then
+		RESULT=$($FFMPEG -i $FIRST_FILE -i $SECOND_FILE -filter_complex "psnr" -f null /dev/null 2>&1)
+		PSNR=$(echo "$RESULT" | grep -oP '(?<=average:).*?(?= min)')
+		if [ $PSNR_VAL == "inf" ]; then
+			PSNR_VAL=100
+		fi
+		PSNR_VAL=$(bc -l <<< "$PSNR_VAL + $PSNR")		
         RESULT=$($FFMPEG -i $FIRST_FILE -i $SECOND_FILE -filter_complex "ssim" -f null /dev/null 2>&1)
         SSIM=$(echo "$RESULT" | grep -oP '(?<=All:).*?(?= )')
         SSIM_VAL=$(bc -l <<< "$SSIM_VAL + $SSIM")
-        RESULT=$($FFMPEG -i $FIRST_FILE -i $SECOND_FILE -lavfi libvmaf -f null /dev/null 2>&1)
-        VMAF=$(echo "$RESULT" | grep -oP '(?<=VMAF score: ).*')
-        VMAF_VAL=$(bc -l <<< "$VMAF_VAL + $VMAF")
         cd $DISTS
         CURRENT_VAL=$(python DISTS_pt.py --dist $FIRST_FILE_PNG --ref $SECOND_FILE_PNG 2>/dev/null)
         CURRENT_VAL=$(printf '%.10f' $CURRENT_VAL)

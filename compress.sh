@@ -1,21 +1,26 @@
-set -x
+#set -x
+#set -e
 #!/bin/bash
 FFMPEG=ffmpeg
 MAGICK=magick
 VVCENC=./vvenc/bin/release-static/vvencapp
 VVCDEC=./vvdec/bin/release-static/vvdecapp
 DOF=/home/ichlubna/Workspace/DoFFromDepthMap/build/
+QUILT_TO_NATIVE=/home/ichlubna/Workspace/quiltToNative/build/
 BZIP=bzip3
 TAR=tar
 TEMP=$(mktemp -d)
-DOF_FOCUS_DISTANCE=0.15
-DOF_FOCUS_BOUNDS=0.0
+DOF_FOCUS_DISTANCE=$($MAGICK $1/focus/0001.hdr -format "%[fx:u.r]" info:)
+DOF_FOCUS_BOUNDS=$($MAGICK $1/focus/0001.hdr -format "%[fx:u.g]" info:)
+#DOF_STRENGTH=35
 DOF_STRENGTH=20
-Q_FRONT="-q 20"
-Q_FULL="-q 20"
-Q_BACK="-q 35"
-Q_MASK="-q 55"
-FULL_MEASURE=0
+Q_FRONT=19
+Q_BACK=42
+Q_FULL=$(( $Q_FRONT + $Q_BACK/$Q_FRONT ))
+#Q_FULL=$Q_FRONT
+Q_FULL=$2
+Q_MASK=55
+FULL_MEASURE=1
 #BACK_FILTER="-vf scale=iw*.8:ih*.8:flags=lanczos"
 #BACK_FILTER_REVERSE="-vf scale=iw*1.25:ih*1.25:flags=lanczos"
 BACK_FILTER=""
@@ -28,25 +33,25 @@ INPUT_PATH=$1
 function compressFull ()
 {
 	$FFMPEG -y -i $1 -pix_fmt yuv420p $TEMP/temp.y4m
-	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS $Q_FULL -o $2
+	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS -q $Q_FULL -o $2
 }
 
 function compressFront ()
 {
 	$FFMPEG -y -i $1 -pix_fmt yuv420p $TEMP/temp.y4m
-	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS $Q_FRONT -o $2
+	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS -q $Q_FRONT -o $2
 }
 
 function compressBack ()
 {
 	$FFMPEG -y -i $1 -pix_fmt yuv420p $BACK_FILTER $TEMP/temp.y4m
-	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS $Q_BACK -o $2
+	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS -q $Q_BACK -o $2
 }
 
 function compressMasks ()
 {
 	$FFMPEG -y -i $1 -pix_fmt yuv420p $TEMP/temp.y4m
-	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS $Q_MASK -o $2
+	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS -q $Q_MASK -o $2
 }
 
 function decompress ()
@@ -71,22 +76,35 @@ BACK_COMP=$TEMP/compressedBack.mkv
 FRONT_COMP=$TEMP/compressedFront.mkv
 FULL_COMP=$TEMP/compressedFull.mkv
 MASKS_COMP=$TEMP/compressedMasks.mkv
+START=$(date +%s.%N)
 compressBack $BACK_INPUT/%04d.png $BACK_COMP
 compressFront $FRONT_INPUT/%04d.png $FRONT_COMP
-compressFull $FULL_INPUT/%04d.png $FULL_COMP
 compressMasks $MASKS_INPUT/%04d.png $MASKS_COMP
+END=$(date +%s.%N)
+TIME_COMPR_PROP=$(echo "$END - $START" | bc)
+START=$(date +%s.%N)
+compressFull $FULL_INPUT/%04d.png $FULL_COMP
+END=$(date +%s.%N)
+TIME_COMPR_FULL=$(echo "$END - $START" | bc)
+
 BACK_DECOMP=$TEMP/decompressedBack
 FRONT_DECOMP=$TEMP/decompressedFront
-FULL_DECOMP=$TEMP/decompressedFull
 MASKS_DECOMP=$TEMP/decompressedMasks
+FULL_DECOMP=$TEMP/decompressedFull
 mkdir $BACK_DECOMP
 mkdir $FRONT_DECOMP
 mkdir $FULL_DECOMP
 mkdir $MASKS_DECOMP
+START=$(date +%s.%N)
 decompressBack $BACK_COMP $BACK_DECOMP/%04d.png
 decompress $FRONT_COMP $FRONT_DECOMP/%04d.png
-decompress $FULL_COMP $FULL_DECOMP/%04d.png
 decompress $MASKS_COMP $MASKS_DECOMP/%04d.png
+END=$(date +%s.%N)
+TIME_DECOMPR_PROP=$(echo "$END - $START" | bc)
+START=$(date +%s.%N)
+decompress $FULL_COMP $FULL_DECOMP/%04d.png
+END=$(date +%s.%N)
+TIME_DECOMPR_FULL=$(echo "$END - $START" | bc)
 
 MERGED_DECOMP=$TEMP/decompressedMerged
 mkdir $MERGED_DECOMP
@@ -141,14 +159,41 @@ BLENDED_FULL=$TEMP/blendedFull
 mkdir $BLENDED_SPLIT_DECOMP
 mkdir $BLENDED_FULL_DECOMP
 mkdir $BLENDED_FULL
-./blendViews.sh $MERGED_DECOMP $BLENDED_SPLIT_DECOMP
-./blendViews.sh $FULL_DECOMP $BLENDED_FULL_DECOMP
-./blendViews.sh $FULL_DOF $BLENDED_FULL
 
-QUALITY_DECODED=$(./measureQuality.sh $FULL_DECOMP $FULL_DOF $FULL_MEASURE)
-QUALITY_BLENDED=$(./measureQuality.sh $BLENDED_FULL_DECOMP $BLENDED_FULL $FULL_MEASURE)
-QUALITY_DECODED_ADA=$(./measureQuality.sh $MERGED_DECOMP $FULL_DOF $FULL_MEASURE)
-QUALITY_BLENDED_ADA=$(./measureQuality.sh $BLENDED_SPLIT_DECOMP $BLENDED_FULL $FULL_MEASURE)
+#./blendViews.sh $MERGED_DECOMP $BLENDED_SPLIT_DECOMP
+#./blendViews.sh $FULL_DECOMP $BLENDED_FULL_DECOMP
+#./blendViews.sh $FULL_DOF $BLENDED_FULL
+
+NAMES=$(find $MERGED_DECOMP -maxdepth 1 | tail -n +2 | tr '\n' ' ')
+#ALL_BLEND_DECOMP=$TEMP/allBlendDecomp.png
+#$MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_DECOMP
+NAMES=$(find $FULL_DECOMP -maxdepth 1 | tail -n +2 | tr '\n' ' ')
+ALL_BLEND_FULL_DECOMP=$TEMP/allBlendFullDecomp.png
+$MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_FULL_DECOMP
+NAMES=$(find $FULL_DOF -maxdepth 1 | tail -n +2 | tr '\n' ' ')
+ALL_BLEND_FULL=$TEMP/allBlendFull.png
+$MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_FULL
+
+QUALITY_ALL_BLENDED_FULL=$(./measureQuality.sh $ALL_BLEND_FULL $ALL_BLEND_FULL_DECOMP $FULL_MEASURE)
+#QUALITY_ALL_BLENDED_ADA=$(./measureQuality.sh $ALL_BLEND_FULL $ALL_BLEND_DECOMP $FULL_MEASURE)
+
+mkdir $TEMP/native
+cd $QUILT_TO_NATIVE
+#./QuiltToNative -i $MERGED_DECOMP -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+#mv $TEMP/native/output.png $TEMP/nativeAda.png
+./QuiltToNative -i $FULL_DECOMP -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+mv $TEMP/native/output.png $TEMP/nativeDecomp.png
+./QuiltToNative -i $FULL_DOF -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+mv $TEMP/native/output.png $TEMP/nativeFull.png
+cd -
+
+QUALITY_ALL_NATIVE_FULL=$(./measureQuality.sh  $TEMP/nativeFull.png $TEMP/nativeDecomp.png $FULL_MEASURE)
+#QUALITY_ALL_NATIVE_ADA=$(./measureQuality.sh $TEMP/nativeFull.png $TEMP/nativeAda.png $FULL_MEASURE)
+
+#QUALITY_DECODED=$(./measureQuality.sh $FULL_DECOMP $FULL_DOF $FULL_MEASURE)
+#QUALITY_BLENDED=$(./measureQuality.sh $BLENDED_FULL_DECOMP $BLENDED_FULL $FULL_MEASURE)
+#QUALITY_DECODED_ADA=$(./measureQuality.sh $MERGED_DECOMP $FULL_DOF $FULL_MEASURE)
+#QUALITY_BLENDED_ADA=$(./measureQuality.sh $BLENDED_SPLIT_DECOMP $BLENDED_FULL $FULL_MEASURE)
 ARCHIVEA=$TEMP/archiveA.tar
 ARCHIVE=$TEMP/archive.tar
 $TAR -cvf $ARCHIVEA $BACK_COMP $FRONT_COMP $MASKS_COMP
@@ -157,17 +202,33 @@ echo "Results"
 echo "Full compression"
 echo -n "Size:"
 echo $(stat --printf="%s" $FULL_COMP)
-echo -n "Decoded:"
-echo $QUALITY_DECODED
-echo -n "Blended partially:"
-echo $QUALITY_BLENDED
+#echo -n "Decoded:"
+#echo $QUALITY_DECODED
+#echo -n "Blended partially:"
+#echo $QUALITY_BLENDED
+echo -n "Blended all:"
+echo $QUALITY_ALL_BLENDED_FULL
+echo -n "Native:"
+echo $QUALITY_ALL_NATIVE_FULL
+echo -n "Compression time: "
+echo $TIME_COMPR_FULL
+echo -n "Decompression time: "
+echo $TIME_DECOMPR_FULL
 
 echo "Adaptive compression"
 echo -n "Size:"
 echo $(stat --printf="%s" $ARCHIVE)
-echo -n "Decoded:"
-echo $QUALITY_DECODED_ADA
-echo -n "Blended partially:"
-echo $QUALITY_BLENDED_ADA
+#echo -n "Decoded:"
+#echo $QUALITY_DECODED_ADA
+#echo -n "Blended partially:"
+#echo $QUALITY_BLENDED_ADA
+#echo -n "Blended all:"
+#echo $QUALITY_ALL_BLENDED_ADA
+#echo -n "Native:"
+#echo $QUALITY_ALL_NATIVE_ADA
+#echo -n "Compression time: "
+#echo $TIME_COMPR_PROP
+#echo -n "Decompression time: "
+#echo $TIME_DECOMPR_PROP
 
 rm -rf $TEMP
