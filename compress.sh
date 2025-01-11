@@ -1,5 +1,5 @@
-#set -x
-#set -e
+set -x
+set -e
 #!/bin/bash
 FFMPEG=ffmpeg
 MAGICK=magick
@@ -181,19 +181,28 @@ mkdir $TEMP/native
 cd $QUILT_TO_NATIVE
 #./QuiltToNative -i $MERGED_DECOMP -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
 #mv $TEMP/native/output.png $TEMP/nativeAda.png
-./QuiltToNative -i $FULL_DECOMP -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
-mv $TEMP/native/output.png $TEMP/nativeDecomp.png
-./QuiltToNative -i $FULL_DOF -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
-mv $TEMP/native/output.png $TEMP/nativeFull.png
+#./QuiltToNative -i $FULL_DECOMP -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+#mv $TEMP/native/output.png $TEMP/nativeDecomp.png
+#./QuiltToNative -i $FULL_DOF -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+#mv $TEMP/native/output.png $TEMP/nativeFull.png
 cd -
 
-QUALITY_ALL_NATIVE_FULL=$(./measureQuality.sh  $TEMP/nativeFull.png $TEMP/nativeDecomp.png $FULL_MEASURE)
-#QUALITY_ALL_NATIVE_ADA=$(./measureQuality.sh $TEMP/nativeFull.png $TEMP/nativeAda.png $FULL_MEASURE)
+mkdir $TEMP/simulatedAda
+mkdir $TEMP/simulatedFull
+mkdir $TEMP/simulatedRef
+mkdir $TEMP/quiltForSim
+./simulateViews.sh $FULL_DOF $TEMP/quiltForSim $TEMP/simulatedRef 
+./simulateViews.sh $FULL_DECOMP $TEMP/quiltForSim $TEMP/simulatedFull 
+#./simulateViews.sh $MERGED_DECOMP $TEMP/quiltForSim $TEMP/simulatedAda 
 
+#QUALITY_ALL_NATIVE_FULL=$(./measureQuality.sh  $TEMP/nativeFull.png $TEMP/nativeDecomp.png $FULL_MEASURE)
+#QUALITY_ALL_NATIVE_ADA=$(./measureQuality.sh $TEMP/nativeFull.png $TEMP/nativeAda.png $FULL_MEASURE)
 #QUALITY_DECODED=$(./measureQuality.sh $FULL_DECOMP $FULL_DOF $FULL_MEASURE)
 #QUALITY_BLENDED=$(./measureQuality.sh $BLENDED_FULL_DECOMP $BLENDED_FULL $FULL_MEASURE)
 #QUALITY_DECODED_ADA=$(./measureQuality.sh $MERGED_DECOMP $FULL_DOF $FULL_MEASURE)
 #QUALITY_BLENDED_ADA=$(./measureQuality.sh $BLENDED_SPLIT_DECOMP $BLENDED_FULL $FULL_MEASURE)
+QUALITY_SIMULATED_FULL=$(./measureQuality.sh  $TEMP/simulatedRef/ $TEMP/simulatedFull/ $FULL_MEASURE)
+#QUALITY_SIMULATED_ADA=$(./measureQuality.sh $TEMP/simulatedRef/ $TEMP/simulatedAda/ $FULL_MEASURE)
 ARCHIVEA=$TEMP/archiveA.tar
 ARCHIVE=$TEMP/archive.tar
 $TAR -cvf $ARCHIVEA $BACK_COMP $FRONT_COMP $MASKS_COMP
@@ -206,10 +215,12 @@ echo $(stat --printf="%s" $FULL_COMP)
 #echo $QUALITY_DECODED
 #echo -n "Blended partially:"
 #echo $QUALITY_BLENDED
-echo -n "Blended all:"
-echo $QUALITY_ALL_BLENDED_FULL
-echo -n "Native:"
-echo $QUALITY_ALL_NATIVE_FULL
+#echo -n "Blended all:"
+#echo $QUALITY_ALL_BLENDED_FULL
+#echo -n "Native:"
+#echo $QUALITY_ALL_NATIVE_FULL
+echo -n "Simulated:"
+echo $QUALITY_SIMULATED_FULL
 echo -n "Compression time: "
 echo $TIME_COMPR_FULL
 echo -n "Decompression time: "
@@ -226,9 +237,11 @@ echo $(stat --printf="%s" $ARCHIVE)
 #echo $QUALITY_ALL_BLENDED_ADA
 #echo -n "Native:"
 #echo $QUALITY_ALL_NATIVE_ADA
+#echo -n "Simulated:"
+#echo $QUALITY_SIMULATED_ADA
 #echo -n "Compression time: "
 #echo $TIME_COMPR_PROP
 #echo -n "Decompression time: "
 #echo $TIME_DECOMPR_PROP
 
-rm -rf $TEMP
+#rm -rf $TEMP

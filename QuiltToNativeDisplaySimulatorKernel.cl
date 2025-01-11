@@ -11,6 +11,7 @@ __kernel void kernelMain(__read_only image2d_t inputImage, __write_only image2d_
     int views = cols*rows;
     float viewInternalCoordsX = (coords[0] / views) / (float)((get_image_width(outputImage) / views)); 
     int currentPixelView = coords[0] % views;
+    currentPixelView = (float)(((int)currentPixelView%cols)+(rows-1-(int)currentPixelView/cols)*cols);
     int2 viewCoords = (int2)(currentPixelView % cols, currentPixelView / cols);
     float2 viewRange = (float2)(1.0f/cols, 1.0f/rows);
     float2 sampleCoords = (float2)(viewRange[0]*viewCoords[0] + viewInternalCoordsX/cols, viewRange[1]*viewCoords[1] + coordsNormalized[1]/rows);
