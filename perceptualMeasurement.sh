@@ -21,13 +21,14 @@ readarray -d "\n" -t CONTENT < $SHUF
 TEST_NUM=0
 for LINE in $CONTENT; do
     TEST_NUM=$((TEST_NUM+1))
-    echo $TEST_NUM
-    continue
     magick -size 5x5 xc:black $2/0.png
     magick -size 5x5 xc:black $2/1.png
     readarray -d "," -t TEST_FILES < <(echo $LINE)
     FIRST=${TEST_FILES[0]} 
     SECOND=${TEST_FILES[1]}
+    if [ ! -f $FIRST ] || [ ! -f $SECOND ] || [ -z $FIRST ] || [ -z $SECOND ]; then
+        continue
+    fi
     SWITCHED=0
     if [ $RANDOM -lt 16383 ]; then 
         SWITCHED=1
