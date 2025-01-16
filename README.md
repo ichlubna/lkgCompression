@@ -1,6 +1,8 @@
 # LKG compression scripts
-./compress.sh ./dataset/scene   
-Creates and tests the split vs full compression.  
+./compress.sh ./dataset/scene  
+Tests the dof compression differences. 
+./compressSplit.sh ./dataset/scene   
+Creates and tests the split vs full compression. Discontinued. 
 ./blendViews.sh inputViewsPath outputViewsPath  
 Blends the views as in the display and produces the output in a directory.  
 ./cameraControl.sh shoot  

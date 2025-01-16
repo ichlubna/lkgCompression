@@ -1,57 +1,30 @@
 set -x
 set -e
 #!/bin/bash
+INPUT_PATH=$(realpath $1)
+QUALITY=$2
+FOCUS=$3
+
 FFMPEG=ffmpeg
 MAGICK=magick
 VVCENC=./vvenc/bin/release-static/vvencapp
 VVCDEC=./vvdec/bin/release-static/vvdecapp
+# https://github.com/ichlubna/DoFFromDepthMap 
 DOF=/home/ichlubna/Workspace/DoFFromDepthMap/build/
+# https://github.com/ichlubna/quiltToNative 
 QUILT_TO_NATIVE=/home/ichlubna/Workspace/quiltToNative/build/
-BZIP=bzip3
-TAR=tar
+# https://github.com/LiheYoung/Depth-Anything
+DEPTH_ANYTHING=/home/ichlubna/Workspace/Depth-Anything
 TEMP=$(mktemp -d)
-DOF_FOCUS_DISTANCE=$($MAGICK $1/focus/0001.hdr -format "%[fx:u.r]" info:)
-DOF_FOCUS_BOUNDS=$($MAGICK $1/focus/0001.hdr -format "%[fx:u.g]" info:)
-#DOF_STRENGTH=35
 DOF_STRENGTH=20
-Q_FRONT=19
-Q_BACK=42
-Q_FULL=$(( $Q_FRONT + $Q_BACK/$Q_FRONT ))
-#Q_FULL=$Q_FRONT
-Q_FULL=$2
-Q_MASK=55
 FULL_MEASURE=1
-#BACK_FILTER="-vf scale=iw*.8:ih*.8:flags=lanczos"
-#BACK_FILTER_REVERSE="-vf scale=iw*1.25:ih*1.25:flags=lanczos"
-BACK_FILTER=""
-BACK_FILTER_REVERSE=""
 ENCODER_OPTIONS="-rs 2 -c yuv420 --preset medium --qpa 1"
-QUILT_ONLY=0
-INPUT_PATH=$1
 
 #Parameters: input, output
-function compressFull ()
+function compress ()
 {
 	$FFMPEG -y -i $1 -pix_fmt yuv420p $TEMP/temp.y4m
-	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS -q $Q_FULL -o $2
-}
-
-function compressFront ()
-{
-	$FFMPEG -y -i $1 -pix_fmt yuv420p $TEMP/temp.y4m
-	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS -q $Q_FRONT -o $2
-}
-
-function compressBack ()
-{
-	$FFMPEG -y -i $1 -pix_fmt yuv420p $BACK_FILTER $TEMP/temp.y4m
-	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS -q $Q_BACK -o $2
-}
-
-function compressMasks ()
-{
-	$FFMPEG -y -i $1 -pix_fmt yuv420p $TEMP/temp.y4m
-	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS -q $Q_MASK -o $2
+	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS -q $QUALITY -o $2
 }
 
 function decompress ()
@@ -61,187 +34,217 @@ function decompress ()
 	$FFMPEG -y -strict -2 -i $1 $2
 }
 
-function decompressBack ()
-{
-	$FFMPEG -y -strict -2 -i $1 $BACK_FILTER_REVERSE $2
-}
-
-FRONT_INPUT=$INPUT_PATH/front
-BACK_INPUT=$INPUT_PATH/back
-FULL_INPUT=$INPUT_PATH/full
-MASKS_INPUT=$INPUT_PATH/masks
-DEPTH_INPUT=$INPUT_PATH/depth
-
-BACK_COMP=$TEMP/compressedBack.mkv
-FRONT_COMP=$TEMP/compressedFront.mkv
-FULL_COMP=$TEMP/compressedFull.mkv
-MASKS_COMP=$TEMP/compressedMasks.mkv
-START=$(date +%s.%N)
-compressBack $BACK_INPUT/%04d.png $BACK_COMP
-compressFront $FRONT_INPUT/%04d.png $FRONT_COMP
-compressMasks $MASKS_INPUT/%04d.png $MASKS_COMP
-END=$(date +%s.%N)
-TIME_COMPR_PROP=$(echo "$END - $START" | bc)
-START=$(date +%s.%N)
-compressFull $FULL_INPUT/%04d.png $FULL_COMP
-END=$(date +%s.%N)
-TIME_COMPR_FULL=$(echo "$END - $START" | bc)
-
-BACK_DECOMP=$TEMP/decompressedBack
-FRONT_DECOMP=$TEMP/decompressedFront
-MASKS_DECOMP=$TEMP/decompressedMasks
-FULL_DECOMP=$TEMP/decompressedFull
-mkdir $BACK_DECOMP
-mkdir $FRONT_DECOMP
-mkdir $FULL_DECOMP
-mkdir $MASKS_DECOMP
-START=$(date +%s.%N)
-decompressBack $BACK_COMP $BACK_DECOMP/%04d.png
-decompress $FRONT_COMP $FRONT_DECOMP/%04d.png
-decompress $MASKS_COMP $MASKS_DECOMP/%04d.png
-END=$(date +%s.%N)
-TIME_DECOMPR_PROP=$(echo "$END - $START" | bc)
-START=$(date +%s.%N)
-decompress $FULL_COMP $FULL_DECOMP/%04d.png
-END=$(date +%s.%N)
-TIME_DECOMPR_FULL=$(echo "$END - $START" | bc)
-
-MERGED_DECOMP=$TEMP/decompressedMerged
-mkdir $MERGED_DECOMP
-for FILE in $BACK_DECOMP/*.png; do
-	FILENAME=$(basename $FILE)
-	#$MAGICK $BACK_DECOMP/$FILENAME -channel rgba -alpha set -fuzz $FUZZ -fill none -opaque $KEYCOLOR $TEMP/backTransparent.png
-	#$MAGICK $FRONT_DECOMP/$FILENAME -channel rgba -alpha set -fuzz $FUZZ -fill none -opaque $KEYCOLOR $TEMP/frontTransparent.png
-	#$MAGICK $TEMP/backTransparent.png $TEMP/frontTransparent.png -compose Over -composite $MERGED_DECOMP/$FILENAME
-	$MAGICK composite $FRONT_DECOMP/$FILENAME $BACK_DECOMP/$FILENAME $MASKS_DECOMP/$FILENAME $MERGED_DECOMP/$FILENAME
-done
-
-#Parameters: input image, depth map, output image
-function fakeDoF ()
-{
-    DOF_IN=$(realpath $1)
-    DOF_DEPTH=$(realpath $2)
-    DOF_OUT=$(realpath $3)
-    cd $DOF  
-    ./DoFFromDepthMap -i $DOF_IN -d $DOF_DEPTH -o $DOF_OUT -f $DOF_FOCUS_DISTANCE -b $DOF_FOCUS_BOUNDS -s $DOF_STRENGTH
-    cd -
-	#$MAGICK $1 $2 -compose blur -define compose:args=10 -composite $3
-}
-
-FULL_DOF=$TEMP/fullDoF
-mkdir $FULL_DOF
-for FILE in $FULL_INPUT/*.png; do
-	FILENAME=$(basename $FILE)
-    FILENAME_NO_EXT="${FILENAME%.*}"
-	fakeDoF $MERGED_DECOMP/$FILENAME $DEPTH_INPUT/$FILENAME_NO_EXT.hdr $MERGED_DECOMP/$FILENAME
-	fakeDoF $FULL_DECOMP/$FILENAME $DEPTH_INPUT/$FILENAME_NO_EXT.hdr $FULL_DECOMP/$FILENAME
-	fakeDoF $FULL_INPUT/$FILENAME $DEPTH_INPUT/$FILENAME_NO_EXT.hdr $FULL_DOF/$FILENAME
-done
-
-ADAPTIVE_QUILT=./adaptiveCompressionQuilt_qs8x6a0.75.png
-$MAGICK montage $MERGED_DECOMP/*.png -tile 8x6 -geometry 420x560+0+0 $ADAPTIVE_QUILT
-$MAGICK $ADAPTIVE_QUILT -flop $ADAPTIVE_QUILT
-STANDARD_QUILT=./standardCompressionQuilt_qs8x6a0.75.png
-$MAGICK montage $FULL_DECOMP/*.png -tile 8x6 -geometry 420x560+0+0 $STANDARD_QUILT
-$MAGICK $STANDARD_QUILT -flop $STANDARD_QUILT
-FULL_QUILT=./noCompressionQuilt_qs8x6a0.75.png
-$MAGICK montage $FULL_DOF/*.png -tile 8x6 -geometry 420x560+0+0 $FULL_QUILT
-$MAGICK $FULL_QUILT -flop $FULL_QUILT
-
-if [[ $QUILT_ONLY -eq 1 ]]; then
-	rm -rf $TEMP
-	exit 0
-fi
-
-BLENDED_SPLIT_DECOMP=$TEMP/blendedDecompressed
-BLENDED_FULL_DECOMP=$TEMP/blendedFullDecompressed
-BLENDED_FULL=$TEMP/blendedFull
-mkdir $BLENDED_SPLIT_DECOMP
-mkdir $BLENDED_FULL_DECOMP
-mkdir $BLENDED_FULL
-
-#./blendViews.sh $MERGED_DECOMP $BLENDED_SPLIT_DECOMP
-#./blendViews.sh $FULL_DECOMP $BLENDED_FULL_DECOMP
-#./blendViews.sh $FULL_DOF $BLENDED_FULL
-
-NAMES=$(find $MERGED_DECOMP -maxdepth 1 | tail -n +2 | tr '\n' ' ')
-#ALL_BLEND_DECOMP=$TEMP/allBlendDecomp.png
-#$MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_DECOMP
-NAMES=$(find $FULL_DECOMP -maxdepth 1 | tail -n +2 | tr '\n' ' ')
-ALL_BLEND_FULL_DECOMP=$TEMP/allBlendFullDecomp.png
-$MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_FULL_DECOMP
-NAMES=$(find $FULL_DOF -maxdepth 1 | tail -n +2 | tr '\n' ' ')
-ALL_BLEND_FULL=$TEMP/allBlendFull.png
-$MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_FULL
-
-QUALITY_ALL_BLENDED_FULL=$(./measureQuality.sh $ALL_BLEND_FULL $ALL_BLEND_FULL_DECOMP $FULL_MEASURE)
-#QUALITY_ALL_BLENDED_ADA=$(./measureQuality.sh $ALL_BLEND_FULL $ALL_BLEND_DECOMP $FULL_MEASURE)
-
-mkdir $TEMP/native
-cd $QUILT_TO_NATIVE
-#./QuiltToNative -i $MERGED_DECOMP -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
-#mv $TEMP/native/output.png $TEMP/nativeAda.png
-#./QuiltToNative -i $FULL_DECOMP -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
-#mv $TEMP/native/output.png $TEMP/nativeDecomp.png
-#./QuiltToNative -i $FULL_DOF -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
-#mv $TEMP/native/output.png $TEMP/nativeFull.png
+# Generating depth maps from input images
+INPUT_PATH_DEPTH=$TEMP/inputDepth
+mkdir $INPUT_PATH_DEPTH
+INPUT_PNG=$TEMP/pngs
+mkdir $INPUT_PNG
+cd $DEPTH_ANYTHING
+#$FFMPEG -i $INPUT_PATH/%04d.png -pix_fmt rgba $INPUT_PNG/%04d.png
+#python run.py --encoder vitl --img-path $INPUT_PNG --outdir $INPUT_PATH_DEPTH --grayscale --pred-only
 cd -
 
-mkdir $TEMP/simulatedAda
-mkdir $TEMP/simulatedFull
-mkdir $TEMP/simulatedRef
-mkdir $TEMP/quiltForSim
-./simulateViews.sh $FULL_DOF $TEMP/quiltForSim $TEMP/simulatedRef 
-./simulateViews.sh $FULL_DECOMP $TEMP/quiltForSim $TEMP/simulatedFull 
-#./simulateViews.sh $MERGED_DECOMP $TEMP/quiltForSim $TEMP/simulatedAda 
+# Applying dof to the input images
+INPUT_PATH_DOF=$TEMP/inputDof
+mkdir $INPUT_PATH_DOF
+INPUT_PATH_DOF_HALF=$TEMP/inputDofHalf
+mkdir $INPUT_PATH_DOF_HALF
+cd $DOF  
+#for FILE in $INPUT_PATH/*.png; do
+#	FILENAME=$(basename $FILE)
+#    FILENAME_NO_EXT="${FILENAME%.*}"
+#    ./DoFFromDepthMap -i $INPUT_PATH/$FILENAME -d $INPUT_PATH_DEPTH/$FILENAME_NO_EXT.hdr -o $INPUT_PATH_DOF/$FILENAME -f $FOCUS -b 0.1 -s $DOF_STRENGTH
+#    ./DoFFromDepthMap -i $INPUT_PATH_DOF/$FILENAME -d $INPUT_PATH_DEPTH/$FILENAME_NO_EXT.hdr -o $INPUT_PATH_DOF/$FILENAME -f $FOCUS -b 0.1 -s $DOF_STRENGTH
+#    ./DoFFromDepthMap -i $INPUT_PATH/$FILENAME -d $INPUT_PATH_DEPTH/$FILENAME_NO_EXT.hdr -o $INPUT_PATH_DOF_HALF/$FILENAME -f $FOCUS -b 0.1 -s $DOF_STRENGTH
+#done
+cd -
 
-#QUALITY_ALL_NATIVE_FULL=$(./measureQuality.sh  $TEMP/nativeFull.png $TEMP/nativeDecomp.png $FULL_MEASURE)
-#QUALITY_ALL_NATIVE_ADA=$(./measureQuality.sh $TEMP/nativeFull.png $TEMP/nativeAda.png $FULL_MEASURE)
-#QUALITY_DECODED=$(./measureQuality.sh $FULL_DECOMP $FULL_DOF $FULL_MEASURE)
-#QUALITY_BLENDED=$(./measureQuality.sh $BLENDED_FULL_DECOMP $BLENDED_FULL $FULL_MEASURE)
-#QUALITY_DECODED_ADA=$(./measureQuality.sh $MERGED_DECOMP $FULL_DOF $FULL_MEASURE)
-#QUALITY_BLENDED_ADA=$(./measureQuality.sh $BLENDED_SPLIT_DECOMP $BLENDED_FULL $FULL_MEASURE)
-QUALITY_SIMULATED_FULL=$(./measureQuality.sh  $TEMP/simulatedRef/ $TEMP/simulatedFull/ $FULL_MEASURE)
-#QUALITY_SIMULATED_ADA=$(./measureQuality.sh $TEMP/simulatedRef/ $TEMP/simulatedAda/ $FULL_MEASURE)
-ARCHIVEA=$TEMP/archiveA.tar
-ARCHIVE=$TEMP/archive.tar
-$TAR -cvf $ARCHIVEA $BACK_COMP $FRONT_COMP $MASKS_COMP
-$BZIP -e -b 511 $ARCHIVEA $ARCHIVE
+compress $INPUT_PATH/%04d.png $TEMP/compressed.mkv
+#compress $INPUT_PATH_DOF/%04d.png $TEMP/compressedDof.mkv
+#compress $INPUT_PATH_DOF_HALF/%04d.png $TEMP/compressedDofHalf.mkv
+
+DECOMPRESSED_PATH=$TEMP/decompressed
+mkdir $DECOMPRESSED_PATH
+DECOMPRESSED_PATH_DOF=$TEMP/decompressedDof
+mkdir $DECOMPRESSED_PATH_DOF
+DECOMPRESSED_PATH_DOF_HALF=$TEMP/decompressedDofHalf
+mkdir $DECOMPRESSED_PATH_DOF_HALF
+decompress $TEMP/compressed.mkv $DECOMPRESSED_PATH/%04d.png
+#decompress $TEMP/compressedDof.mkv $DECOMPRESSED_PATH_DOF/%04d.png
+#decompress $TEMP/compressedDofHalf.mkv $DECOMPRESSED_PATH_DOF_HALF/%04d.png
+
+# Applying second half of dof and full dof to undoffed and to reference
+DECOMPRESSED_PATH_DOF_HALF_FINISHED=$TEMP/decompressedDofHalfFinished
+mkdir $DECOMPRESSED_PATH_DOF_HALF_FINISHED
+DECOMPRESSED_PATH_DOF_POST=$TEMP/decompressedDofPost
+mkdir $DECOMPRESSED_PATH_DOF_POST
+DOF_REFERENCE=$TEMP/reference
+mkdir $DOF_REFERENCE
+cd $DOF  
+#for FILE in $INPUT_PATH/*.png; do
+#	FILENAME=$(basename $FILE)
+#    FILENAME_NO_EXT="${FILENAME%.*}"
+#    ./DoFFromDepthMap -i $DECOMPRESSED_PATH/$FILENAME -d $INPUT_PATH_DEPTH/$FILENAME_NO_EXT.hdr -o $DECOMPRESSED_PATH_DOF_POST/$FILENAME -f $FOCUS -b 0.1 -s $DOF_STRENGTH
+#    ./DoFFromDepthMap -i $DECOMPRESSED_PATH_DOF/$FILENAME -d $INPUT_PATH_DEPTH/$FILENAME_NO_EXT.hdr -o $DECOMPRESSED_PATH_DOF_POST/$FILENAME -f $FOCUS -b 0.1 -s $DOF_STRENGTH
+#    ./DoFFromDepthMap -i $DECOMPRESSED_PATH_DOF_HALF/$FILENAME -d $INPUT_PATH_DEPTH/$FILENAME_NO_EXT.hdr -o $DECOMPRESSED_PATH_DOF_HALF_FINISHED/$FILENAME -f $FOCUS -b 0.1 -s $DOF_STRENGTH
+#    ./DoFFromDepthMap -i $INPUT_PATH/$FILENAME -d $INPUT_PATH_DEPTH/$FILENAME_NO_EXT.hdr -o $DOF_REFERENCE/$FILENAME -f $FOCUS -b 0.1 -s $DOF_STRENGTH
+#    ./DoFFromDepthMap -i $DOF_REFERENCE/$FILENAME -d $INPUT_PATH_DEPTH/$FILENAME_NO_EXT.hdr -o $DOF_REFERENCE/$FILENAME -f $FOCUS -b 0.1 -s $DOF_STRENGTH
+#done
+cd -
+
+DOF_PRE=$DECOMPRESSED_PATH_DOF
+DOF_POST=$DECOMPRESSED_PATH_DOF_POST
+DOF_HALF=$DECOMPRESSED_PATH_DOF_HALF_FINISHED
+
+# Blended metric
+BLENDED_DOF_REFERENCE=$TEMP/blendedDofRef
+mkdir $BLENDED_DOF_REFERENCE
+BLENDED_DOF_PRE=$TEMP/blendedDofPre
+mkdir $BLENDED_DOF_PRE
+BLENDED_DOF_POST=$TEMP/blendedDofPost
+mkdir $BLENDED_DOF_POST
+BLENDED_DOF_HALF=$TEMP/blendedDofHalf
+mkdir $BLENDED_DOF_HALF
+BLENDED_NODOF_REF=$TEMP/blendedNodofRef
+mkdir $BLENDED_NODOF_REF
+BLENDED_NODOF_DEC=$TEMP/blendedNodofDec
+mkdir $BLENDED_NODOF_DEC
+#./blendViews.sh $DOF_REFERENCE $BLENDED_DOF_REFERENCE
+#./blendViews.sh $DOF_PRE $BLENDED_DOF_PRE
+#./blendViews.sh $DOF_POST $BLENDED_DOF_POST
+#./blendViews.sh $DOF_HALF $BLENDED_DOF_HALF
+#./blendViews.sh $INPUT_PATH $BLENDED_NODOF_REF
+#./blendViews.sh $DECOMPRESSED_PATH $BLENDED_NODOF_DEC
+
+# All blended metric
+NAMES=$(find $DOF_REFERENCE -maxdepth 1 | tail -n +2 | tr '\n' ' ')
+ALL_BLEND_DOF_REF=$TEMP/allBlendDofRef.png
+#$MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_DOF_REF
+NAMES=$(find $DOF_PRE -maxdepth 1 | tail -n +2 | tr '\n' ' ')
+ALL_BLEND_DOF_PRE=$TEMP/allBlendDofPre.png
+#$MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_DOF_PRE
+NAMES=$(find $DOF_POST -maxdepth 1 | tail -n +2 | tr '\n' ' ')
+ALL_BLEND_DOF_POST=$TEMP/allBlendDofPost.png
+#$MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_DOF_POST
+NAMES=$(find $DOF_HALF -maxdepth 1 | tail -n +2 | tr '\n' ' ')
+ALL_BLEND_DOF_HALF=$TEMP/allBlendDofHalf.png
+#$MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_DOF_HALF
+NAMES=$(find $INPUT_PATH -maxdepth 1 | tail -n +2 | tr '\n' ' ')
+ALL_BLEND_NODOF_REF=$TEMP/allBlendNoDofRef.png
+$MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_NODOF_REF
+NAMES=$(find $DECOMPRESSED_PATH -maxdepth 1 | tail -n +2 | tr '\n' ' ')
+ALL_BLEND_NODOF_DEC=$TEMP/allBlendNoDofDec.png
+$MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_NODOF_DEC
+#QUALITY_ALL_BLENDED_PRE=$(./measureQuality.sh $ALL_BLEND_DOF_PRE $ALL_BLEND_DOF_REF $FULL_MEASURE)
+#QUALITY_ALL_BLENDED_POST=$(./measureQuality.sh $ALL_BLEND_DOF_POST $ALL_BLEND_DOF_REF $FULL_MEASURE)
+#QUALITY_ALL_BLENDED_HALF=$(./measureQuality.sh $ALL_BLEND_DOF_HALF $ALL_BLEND_DOF_REF $FULL_MEASURE)
+QUALITY_ALL_BLENDED_DEC=$(./measureQuality.sh $ALL_BLEND_NODOF_DEC $ALL_BLEND_NODOF_REF $FULL_MEASURE)
+
+# Native metric
+mkdir $TEMP/native
+cd $QUILT_TO_NATIVE
+#./QuiltToNative -i $DOF_PRE -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+#mv $TEMP/native/output.png $TEMP/nativePre.png
+#./QuiltToNative -i $DOF_POST -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+#mv $TEMP/native/output.png $TEMP/nativePost.png
+#./QuiltToNative -i $DOF_HALF -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+#mv $TEMP/native/output.png $TEMP/nativeHalf.png
+#./QuiltToNative -i $DOF_REFERENCE -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+#mv $TEMP/native/output.png $TEMP/nativeRef.png
+./QuiltToNative -i $INPUT_PATH -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+mv $TEMP/native/output.png $TEMP/nativeNodofRef.png
+./QuiltToNative -i $DECOMPRESSED_PATH -o $TEMP/native -cols 8 -rows 6 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+mv $TEMP/native/output.png $TEMP/nativeNodofDec.png
+cd -
+#QUALITY_NATIVE_PRE=$(./measureQuality.sh  $TEMP/nativePre.png $TEMP/nativeRef.png $FULL_MEASURE)
+#QUALITY_NATIVE_POST=$(./measureQuality.sh  $TEMP/nativePost.png $TEMP/nativeRef.png $FULL_MEASURE)
+#QUALITY_NATIVE_HALF=$(./measureQuality.sh  $TEMP/nativeHalf.png $TEMP/nativeRef.png $FULL_MEASURE)
+QUALITY_NATIVE_DEC=$(./measureQuality.sh  $TEMP/nativeNodofDec.png $TEMP/nativeNodofRef.png $FULL_MEASURE)
+
+# Simulated metric
+mkdir $TEMP/simulatedPre
+mkdir $TEMP/simulatedPost
+mkdir $TEMP/simulatedHalf
+mkdir $TEMP/simulatedRef
+mkdir $TEMP/simulatedNodofRef
+mkdir $TEMP/simulatedNodofDec
+mkdir $TEMP/quiltForSim
+#./simulateViews.sh $DOF_PRE $TEMP/quiltForSim $TEMP/simulatedPre 
+#./simulateViews.sh $DOF_POST $TEMP/quiltForSim $TEMP/simulatedPost 
+#./simulateViews.sh $DOF_HALF $TEMP/quiltForSim $TEMP/simulatedHalf 
+#./simulateViews.sh $DOF_REFERENCE $TEMP/quiltForSim $TEMP/simulatedRef
+./simulateViews.sh $INPUT_PATH $TEMP/quiltForSim $TEMP/simulatedNodofRef
+./simulateViews.sh $DECOMPRESSED_PATH $TEMP/quiltForSim $TEMP/simulatedNodofDec
+#QUALITY_SIMULATED_PRE=$(./measureQuality.sh  $TEMP/simulatedPre/ $TEMP/simulatedRef/ $FULL_MEASURE)
+#QUALITY_SIMULATED_POST=$(./measureQuality.sh  $TEMP/simulatedPost/ $TEMP/simulatedRef/ $FULL_MEASURE)
+#QUALITY_SIMULATED_HALF=$(./measureQuality.sh  $TEMP/simulatedHalf/ $TEMP/simulatedRef/ $FULL_MEASURE)
+QUALITY_SIMULATED_DEC=$(./measureQuality.sh  $TEMP/simulatedNodofDec/ $TEMP/simulatedNodofRef/ $FULL_MEASURE)
+
+# Simple decoding metric
+#QUALITY_DECODED_PRE=$(./measureQuality.sh $DOF_PRE $DOF_REFERENCE $FULL_MEASURE)
+#QUALITY_DECODED_POST=$(./measureQuality.sh $DOF_POST $DOF_REFERENCE $FULL_MEASURE)
+#QUALITY_DECODED_HALF=$(./measureQuality.sh $DOF_HALF $DOF_REFERENCE $FULL_MEASURE)
+#QUALITY_DECODED_DEC=$(./measureQuality.sh $DECOMPRESSED_PATH $INPUT_PATH $FULL_MEASURE)
+
 echo "Results"
-echo "Full compression"
+echo "No dof"
 echo -n "Size:"
-echo $(stat --printf="%s" $FULL_COMP)
+PRE_SIZE=$(stat --printf="%s" $TEMP/compressedDof.mkv)
+echo $PRE_SIZE
 #echo -n "Decoded:"
 #echo $QUALITY_DECODED
 #echo -n "Blended partially:"
-#echo $QUALITY_BLENDED
-#echo -n "Blended all:"
-#echo $QUALITY_ALL_BLENDED_FULL
-#echo -n "Native:"
-#echo $QUALITY_ALL_NATIVE_FULL
+#echo $QUALITY_BLENDED_DEC
+echo -n "Blended all:"
+echo $QUALITY_ALL_BLENDED_DEC
+echo -n "Native:"
+echo $QUALITY_NATIVE_DEC
 echo -n "Simulated:"
-echo $QUALITY_SIMULATED_FULL
-echo -n "Compression time: "
-echo $TIME_COMPR_FULL
-echo -n "Decompression time: "
-echo $TIME_DECOMPR_FULL
+echo $QUALITY_SIMULATED_DEC
 
-echo "Adaptive compression"
+echo "Pre"
 echo -n "Size:"
-echo $(stat --printf="%s" $ARCHIVE)
+#PRE_SIZE=$(stat --printf="%s" $TEMP/compressedDof.mkv)
+#echo $PRE_SIZE
 #echo -n "Decoded:"
-#echo $QUALITY_DECODED_ADA
+#echo $QUALITY_DECODED_PRE
 #echo -n "Blended partially:"
-#echo $QUALITY_BLENDED_ADA
+#echo $QUALITY_BLENDED_PRE
 #echo -n "Blended all:"
-#echo $QUALITY_ALL_BLENDED_ADA
+#echo $QUALITY_ALL_BLENDED_PRE
 #echo -n "Native:"
-#echo $QUALITY_ALL_NATIVE_ADA
+#echo $QUALITY_NATIVE_PRE
 #echo -n "Simulated:"
-#echo $QUALITY_SIMULATED_ADA
-#echo -n "Compression time: "
-#echo $TIME_COMPR_PROP
-#echo -n "Decompression time: "
-#echo $TIME_DECOMPR_PROP
+#echo $QUALITY_SIMULATED_PRE
 
-#rm -rf $TEMP
+echo "Post"
+echo -n "Size:"
+#POST_SIZE=$(stat --printf="%s" $TEMP/compressed.mkv)
+#echo $POST_SIZE
+#echo -n "Decoded:"
+#echo $QUALITY_DECODED_POST
+#echo -n "Blended partially:"
+#echo $QUALITY_BLENDED_POST
+#echo -n "Blended all:"
+#echo $QUALITY_ALL_BLENDED_POST
+#echo -n "Native:"
+#echo $QUALITY_NATIVE_POST
+#echo -n "Simulated:"
+#echo $QUALITY_SIMULATED_POST
+
+echo "Half"
+echo -n "Size:"
+#HALF_SIZE=$(stat --printf="%s" $TEMP/compressedDofHalf.mkv)
+#echo $HALF_SIZE
+#echo -n "Decoded:"
+#echo $QUALITY_DECODED_HALF
+#echo -n "Blended partially:"
+#echo $QUALITY_BLENDED_HALF
+#echo -n "Blended all:"
+#echo $QUALITY_ALL_BLENDED_HALF
+#echo -n "Native:"
+#echo $QUALITY_NATIVE_HALF
+#echo -n "Simulated:"
+#echo $QUALITY_SIMULATED_HALF
+
+rm -rf $TEMP
