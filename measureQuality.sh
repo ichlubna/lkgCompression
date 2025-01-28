@@ -11,7 +11,7 @@ NIQSV=/home/ichlubna/Workspace/NIQSV-master/build
 LIQE=/home/ichlubna/Workspace/LIQE-main
 FULL_MEASURE=$3
 
-#Parameters: decompressed image, reference image
+#Parameters: decompressed image, reference image, full measurement of not
 function measureSingle ()
 {
     FIRST_FILE=$(realpath $1)
@@ -27,7 +27,7 @@ function measureSingle ()
 		RESULT=$($FFMPEG -i $FIRST_FILE -i $SECOND_FILE -filter_complex "psnr" -f null /dev/null 2>&1)
 		PSNR=$(echo "$RESULT" | grep -oP '(?<=average:).*?(?= min)')
 		if [ $PSNR_VAL == "inf" ]; then
-			PSNR_VAL=100
+	    		PSNR_VAL=100
 		fi
 		PSNR_VAL=$(bc -l <<< "$PSNR_VAL + $PSNR")		
         RESULT=$($FFMPEG -i $FIRST_FILE -i $SECOND_FILE -filter_complex "ssim" -f null /dev/null 2>&1)
