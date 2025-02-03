@@ -1,6 +1,7 @@
 # LKG compression scripts
-./compress.sh ./dataset/scene videoQualityParameter jpegQualityThreshold outputPath 
+./compress.sh ./dataset/scene videoQualityParameter jpegQualityThreshold outputPath focusDepthValue  
 Tests the dof compression differences. 
+The last argument is optional and if not supplied, automatic detection is used.
 ./compressSplit.sh ./dataset/scene   
 Creates and tests the split vs full compression. Discontinued. 
 ./blendViews.sh inputViewsPath outputViewsPath  

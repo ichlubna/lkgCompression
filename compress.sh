@@ -5,6 +5,15 @@ INPUT_PATH=$(realpath $1)
 QUALITY=$2
 THRESHOLD=$3
 OUTPUT_PATH=$(realpath $4)
+INPUT_DEPTH_VAL=$5
+
+#QUALITY_FULL=$(($QUALITY+10))
+#QUALITY_HALF=$(($QUALITY+5))
+THRESHOLD_FULL=$(($THRESHOLD+22))
+
+QUALITY_FULL=$QUALITY
+QUALITY_HALF=$QUALITY
+#THRESHOLD_FULL=$THRESHOLD
 
 # https://github.com/FFmpeg/FFmpeg
 FFMPEG=ffmpeg
@@ -24,23 +33,37 @@ QUILT_TO_NATIVE=/home/ichlubna/Workspace/quiltToNative/build/
 DEPTH_ANYTHING=/home/ichlubna/Workspace/Depth-Anything
 # https://github.com/ichlubna/quiltFocus
 QUILT_FOCUS=/home/ichlubna/Workspace/quiltFocus/
+# https://github.com/google/knusperli
+KNUSPERLI=/home/ichlubna/Workspace/knusperli/
 TEMP=$(mktemp -d)
 DOF_STRENGTH=20
 FULL_MEASURE=0
 ENCODER_OPTIONS="-rs 2 -c yuv420 --preset medium --qpa 1"
 VIEW_COUNT=$(ls -1q $INPUT_PATH/* | wc -l)
 
-#Parameters: input, output
+factors()
+{
+    C=$1
+    sqrt_C=$(echo "sqrt($C)" | bc)
+    ROWS=$sqrt_C
+    while [ $((C % ROWS)) -ne 0 ]; do
+        ROWS=$((ROWS - 1))    
+    done
+    COLS=$((C / ROWS))
+}
+factors $VIEW_COUNT
+
+#Parameters: input, output, qp
 function compress ()
 {
 	$FFMPEG -y -i $1 -pix_fmt yuv420p $TEMP/temp.y4m
-	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS -q $QUALITY -o $2
+	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS -q $3 -o $2
 }
 
 function compressLossless ()
 {
 	$FFMPEG -y -i $1 -pix_fmt yuv420p $TEMP/temp.y4m
-	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS -q 10 -o $2
+	$VVCENC -i $TEMP/temp.y4m $ENCODER_OPTIONS -q 5 -o $2
 }
 
 function decompress ()
@@ -68,7 +91,13 @@ cd $QUILT_FOCUS
 FOCUS_INFO=$(./generateMap.sh $INPUT_PATH/%04d.png $INPUT_DEPTH_PNG/%04d_depth.png $TEMP/test.hdr)
 echo $FOCUS_INFO
 FOCUS_COORDS=$(echo "$FOCUS_INFO" | tail -1 | head -1)
-DEPTH_8BIT=$(echo "$FOCUS_INFO" | tail -3 | head -1)
+
+if [ -z "$INPUT_DEPTH_VAL" ]; then
+    DEPTH_8BIT=$(echo "$FOCUS_INFO" | tail -3 | head -1)
+else
+    DEPTH_8BIT=$INPUT_DEPTH_VAL
+fi
+
 DEPTH=$(bc <<< "scale=5; $DEPTH_8BIT/255") 
 DEPTH_NORM=$(echo "$FOCUS_INFO" | tail -2 | head -1)
 cd -
@@ -90,9 +119,20 @@ for FILE in $INPUT_PATH/*.png; do
 done
 cd -
 
-compress $INPUT_PATH/%04d.png $TEMP/compressed.mkv
-compress $INPUT_PATH_DOF/%04d.png $TEMP/compressedDof.mkv
-compress $INPUT_PATH_DOF_HALF/%04d.png $TEMP/compressedDofHalf.mkv
+compress $INPUT_PATH/%04d.png $TEMP/compressed.mkv $QUALITY_FULL
+compress $INPUT_PATH_DOF/%04d.png $TEMP/compressedDof.mkv $QUALITY
+compress $INPUT_PATH_DOF_HALF/%04d.png $TEMP/compressedDofHalf.mkv $QUALITY_HALF
+
+# Deblocks JPEG, parameters: input jpg image, output png image
+function deblockJPG ()
+{
+    DBL_JPEG=$(realpath $1)
+    DBL_OUT=$(realpath $2)
+    cd $KNUSPERLI
+    $FFMPEG -y -i $DBL_JPEG -pix_fmt yuv420p -q:v 1 -qmin 1 -qmax 1 output420.jpg
+    bazel-bin/knusperli output420.jpg $DBL_OUT
+    cd -
+}
 
 # Compressing withot dof
 PPM_INPUT=$TEMP/ppm
@@ -100,24 +140,36 @@ mkdir $PPM_INPUT
 $FFMPEG -i $INPUT_PATH/%04d.png -pix_fmt rgb24 $PPM_INPUT/%04d.ppm
 JPG_FULL_COMP=$TEMP/jpgFull
 mkdir $JPG_FULL_COMP
+JPG_FULL_THR_COMP=$TEMP/jpgFullThr
+mkdir $JPG_FULL_THR_COMP
 JPG_ADAPTIVE=$TEMP/jpgAdaptive
 mkdir $JPG_ADAPTIVE
 JPG_REF=$TEMP/jpgReference
 mkdir $JPG_REF
+THIS_PATH=$(pwd)
 cd $JPG
+JPG_NEIGHBORHOOD=15
+JPG_FACTOR=0.5
+JPG_Q=75
 for FILE in $PPM_INPUT/*.ppm; do
 	FILENAME=$(basename $FILE)
     FILENAME_NO_EXT="${FILENAME%.*}"
     $MAGICK $INPUT_DEPTH_PNG/$FILENAME_NO_EXT"_depth.png" -compress none $TEMP/depth.pgm
-    ./encoder -q 100 -o 1 -T $THRESHOLD -d $DEPTH_8BIT $FILE $JPG_ADAPTIVE/$FILENAME_NO_EXT.jpg $TEMP/depth.pgm
-    ./encoder -q 100 -o 1 -T $THRESHOLD -r 9999,9999,99999,99999 $FILE $JPG_FULL_COMP/$FILENAME_NO_EXT.jpg 
-    ./encoder -q 100 -o 1 -T 0 -r 9999,9999,99999,99999 $FILE $JPG_REF/$FILENAME_NO_EXT.jpg 
+    ./encoder -f $JPG_FACTOR -n $JPG_NEIGHBORHOOD -q $JPG_Q -o 1 -T $THRESHOLD -d $DEPTH_8BIT $FILE $TEMP/temp.jpg $TEMP/depth.pgm
+    deblockJPG $TEMP/temp.jpg $JPG_ADAPTIVE/$FILENAME_NO_EXT.png
+    ./encoder -f 1.0 -n $JPG_NEIGHBORHOOD -q $JPG_Q -o 1 -T $THRESHOLD -r 9999,9999,99999,99999 $FILE $TEMP/temp.jpg 
+    deblockJPG $TEMP/temp.jpg $JPG_FULL_COMP/$FILENAME_NO_EXT.png
+    ./encoder -f 1.0 -n $JPG_NEIGHBORHOOD -q $JPG_Q -o 1 -T $THRESHOLD_FULL -r 9999,9999,99999,99999 $FILE $TEMP/temp.jpg 
+    deblockJPG $TEMP/temp.jpg $JPG_FULL_THR_COMP/$FILENAME_NO_EXT.png
+    ./encoder -f 1.0 -n $JPG_NEIGHBORHOOD -q $JPG_Q -o 1 -T 0 -r 9999,9999,99999,99999 $FILE $TEMP/temp.jpg 
+    deblockJPG $TEMP/temp.jpg $JPG_REF/$FILENAME_NO_EXT.png
 done
-cd -
+cd $THIS_PATH
 
-compressLossless $JPG_ADAPTIVE/%04d.jpg $TEMP/compressedJpgAdaptive.mkv
-compressLossless $JPG_FULL_COMP/%04d.jpg $TEMP/compressedJpgFull.mkv
-compressLossless $JPG_REF/%04d.jpg $TEMP/compressedJpgRef.mkv
+compressLossless $JPG_ADAPTIVE/%04d.png $TEMP/compressedJpgAdaptive.mkv
+compressLossless $JPG_FULL_COMP/%04d.png $TEMP/compressedJpgFull.mkv
+compressLossless $JPG_FULL_THR_COMP/%04d.png $TEMP/compressedJpgFullThr.mkv
+compressLossless $JPG_REF/%04d.png $TEMP/compressedJpgRef.mkv
 
 DECOMPRESSED_PATH=$TEMP/decompressed
 mkdir $DECOMPRESSED_PATH
@@ -129,6 +181,8 @@ DECOMPRESSED_PATH_JPG_ADA=$TEMP/decompressedJpgAda
 mkdir $DECOMPRESSED_PATH_JPG_ADA
 DECOMPRESSED_PATH_JPG_FULL=$TEMP/decompressedJpgFull
 mkdir $DECOMPRESSED_PATH_JPG_FULL
+DECOMPRESSED_PATH_JPG_FULL_THR=$TEMP/decompressedJpgFullThr
+mkdir $DECOMPRESSED_PATH_JPG_FULL_THR
 DECOMPRESSED_PATH_JPG_REF=$TEMP/decompressedJpgRef
 mkdir $DECOMPRESSED_PATH_JPG_REF
 decompress $TEMP/compressed.mkv $DECOMPRESSED_PATH/%04d.png
@@ -136,7 +190,17 @@ decompress $TEMP/compressedDof.mkv $DECOMPRESSED_PATH_DOF/%04d.png
 decompress $TEMP/compressedDofHalf.mkv $DECOMPRESSED_PATH_DOF_HALF/%04d.png
 decompress $TEMP/compressedJpgAdaptive.mkv $DECOMPRESSED_PATH_JPG_ADA/%04d.png
 decompress $TEMP/compressedJpgFull.mkv $DECOMPRESSED_PATH_JPG_FULL/%04d.png
+decompress $TEMP/compressedJpgFullThr.mkv $DECOMPRESSED_PATH_JPG_FULL_THR/%04d.png
 decompress $TEMP/compressedJpgRef.mkv $DECOMPRESSED_PATH_JPG_REF/%04d.png
+
+function deblockFinal ()
+{
+   $FFMPEG -y -i $1 -filter:v deblock=filter=strong:block=8 $1
+}
+
+deblockFinal $DECOMPRESSED_PATH_JPG_ADA/%04d.png 
+deblockFinal $DECOMPRESSED_PATH_JPG_FULL/%04d.png
+deblockFinal $DECOMPRESSED_PATH_JPG_FULL_THR/%04d.png
 
 # Applying second half of dof and full dof to undoffed and to reference
 DECOMPRESSED_PATH_DOF_HALF_FINISHED=$TEMP/decompressedDofHalfFinished
@@ -151,7 +215,7 @@ for FILE in $INPUT_PATH/*.png; do
     FILENAME_NO_EXT="${FILENAME%.*}"
     DEPTHNAME=$INPUT_DEPTH/$FILENAME_NO_EXT"_depth".hdr
     ./DoFFromDepthMap -i $DECOMPRESSED_PATH/$FILENAME -d $DEPTHNAME -o $DECOMPRESSED_PATH_DOF_POST/$FILENAME -f $DEPTH -b 0.1 -s $DOF_STRENGTH
-    ./DoFFromDepthMap -i $DECOMPRESSED_PATH_DOF/$FILENAME -d $DEPTHNAME -o $DECOMPRESSED_PATH_DOF_POST/$FILENAME -f $DEPTH -b 0.1 -s $DOF_STRENGTH
+    ./DoFFromDepthMap -i $DECOMPRESSED_PATH_DOF_POST/$FILENAME -d $DEPTHNAME -o $DECOMPRESSED_PATH_DOF_POST/$FILENAME -f $DEPTH -b 0.1 -s $DOF_STRENGTH
     ./DoFFromDepthMap -i $DECOMPRESSED_PATH_DOF_HALF/$FILENAME -d $DEPTHNAME -o $DECOMPRESSED_PATH_DOF_HALF_FINISHED/$FILENAME -f $DEPTH -b 0.1 -s $DOF_STRENGTH
     ./DoFFromDepthMap -i $INPUT_PATH/$FILENAME -d $DEPTHNAME -o $DOF_REFERENCE/$FILENAME -f $DEPTH -b 0.1 -s $DOF_STRENGTH
     ./DoFFromDepthMap -i $DOF_REFERENCE/$FILENAME -d $DEPTHNAME -o $DOF_REFERENCE/$FILENAME -f $DEPTH -b 0.1 -s $DOF_STRENGTH
@@ -174,15 +238,19 @@ mkdir -p $OUTPUT_PATH/nodofJpegAda
 cp -f $DECOMPRESSED_PATH_JPG_ADA/* $OUTPUT_PATH/nodofJpegAda/
 mkdir -p $OUTPUT_PATH/nodofJpegFull
 cp -f $DECOMPRESSED_PATH_JPG_FULL/* $OUTPUT_PATH/nodofJpegFull/
+mkdir -p $OUTPUT_PATH/nodofJpegFullThr
+cp -f $DECOMPRESSED_PATH_JPG_FULL_THR/* $OUTPUT_PATH/nodofJpegFullThr/
 mkdir -p $OUTPUT_PATH/nodofJpegRef
 cp -f $DECOMPRESSED_PATH_JPG_REF/* $OUTPUT_PATH/nodofJpegRef/
 mkdir -p $OUTPUT_PATH/nodofReference
 cp -f $INPUT_PATH/* $OUTPUT_PATH/nodofReference/
 mkdir -p $OUTPUT_PATH/depth
 cp -f $INPUT_DEPTH/* $OUTPUT_PATH/depth/
+mkdir -p $OUTPUT_PATH/depthPng
+cp -f $INPUT_DEPTH_PNG/* $OUTPUT_PATH/depthPng/
+
 
 : '
-
 # Blended metric
 BLENDED_DOF_REFERENCE=$TEMP/blendedDofRef
 mkdir $BLENDED_DOF_REFERENCE
@@ -200,6 +268,8 @@ BLENDED_JPG_ADA=$TEMP/blendedJpgAda
 mkdir $BLENDED_JPG_ADA
 BLENDED_JPG_FULL=$TEMP/blendedJpgFull
 mkdir $BLENDED_JPG_FULL
+BLENDED_JPG_FULL_THR=$TEMP/blendedJpgFullThr
+mkdir $BLENDED_JPG_FULL_THR
 BLENDED_JPG_REF=$TEMP/blendedJpgRef
 mkdir $BLENDED_JPG_REF
 ./blendViews.sh $DOF_REFERENCE $BLENDED_DOF_REFERENCE
@@ -210,6 +280,7 @@ mkdir $BLENDED_JPG_REF
 ./blendViews.sh $DECOMPRESSED_PATH $BLENDED_NODOF_DEC
 ./blendViews.sh $DECOMPRESSED_PATH_JPG_ADA $BLENDED_JPG_ADA
 ./blendViews.sh $DECOMPRESSED_PATH_JPG_FULL $BLENDED_JPG_FULL
+./blendViews.sh $DECOMPRESSED_PATH_JPG_FULL_THR $BLENDED_JPG_FULL_THR
 ./blendViews.sh $DECOMPRESSED_PATH_JPG_REF $BLENDED_JPG_REF
 QUALITY_BLENDED_PRE=$(./measureQuality.sh $BLENDED_DOF_PRE $BLENDED_DOF_REFERENCE $FULL_MEASURE)
 QUALITY_BLENDED_POST=$(./measureQuality.sh $BLENDED_DOF_POST $BLENDED_DOF_REFERENCE $FULL_MEASURE)
@@ -217,7 +288,7 @@ QUALITY_BLENDED_HALF=$(./measureQuality.sh $BLENDED_DOF_HALF $BLENDED_DOF_REFERE
 QUALITY_BLENDED_DEC=$(./measureQuality.sh $BLENDED_NODOF_DEC $BLENDED_NODOF_REF $FULL_MEASURE)
 QUALITY_BLENDED_DEC_JPG_ADA=$(./measureQuality.sh $BLENDED_JPG_ADA $BLENDED_JPG_REF $FULL_MEASURE)
 QUALITY_BLENDED_DEC_JPG_FULL=$(./measureQuality.sh $BLENDED_JPG_FULL $BLENDED_JPG_REF $FULL_MEASURE)
-
+QUALITY_BLENDED_DEC_JPG_FULL_THR=$(./measureQuality.sh $BLENDED_JPG_FULL_THR $BLENDED_JPG_REF $FULL_MEASURE)
 '
 
 # All blended metric
@@ -245,6 +316,9 @@ $MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_JPG_ADA
 NAMES=$(find $DECOMPRESSED_PATH_JPG_FULL -maxdepth 1 | tail -n +2 | tr '\n' ' ')
 ALL_BLEND_JPG_FULL=$TEMP/allBlendJpgFull.png
 $MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_JPG_FULL
+NAMES=$(find $DECOMPRESSED_PATH_JPG_FULL_THR -maxdepth 1 | tail -n +2 | tr '\n' ' ')
+ALL_BLEND_JPG_FULL_THR=$TEMP/allBlendJpgFullThr.png
+$MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_JPG_FULL_THR
 NAMES=$(find $DECOMPRESSED_PATH_JPG_REF -maxdepth 1 | tail -n +2 | tr '\n' ' ')
 ALL_BLEND_JPG_REF=$TEMP/allBlendJpgRef.png
 $MAGICK $NAMES -evaluate-sequence Mean $ALL_BLEND_JPG_REF
@@ -255,38 +329,58 @@ QUALITY_ALL_BLENDED_HALF=$(./measureQuality.sh $ALL_BLEND_DOF_HALF $ALL_BLEND_DO
 QUALITY_ALL_BLENDED_DEC=$(./measureQuality.sh $ALL_BLEND_NODOF_DEC $ALL_BLEND_NODOF_REF $FULL_MEASURE)
 QUALITY_ALL_BLENDED_DEC_JPG_ADA=$(./measureQuality.sh $ALL_BLEND_JPG_ADA $ALL_BLEND_JPG_REF $FULL_MEASURE)
 QUALITY_ALL_BLENDED_DEC_JPG_FULL=$(./measureQuality.sh $ALL_BLEND_JPG_FULL $ALL_BLEND_JPG_REF $FULL_MEASURE)
-
-: '
+QUALITY_ALL_BLENDED_DEC_JPG_FULL_THR=$(./measureQuality.sh $ALL_BLEND_JPG_FULL_THR $ALL_BLEND_JPG_REF $FULL_MEASURE)
 
 # Native metric
 mkdir $TEMP/native
 cd $QUILT_TO_NATIVE
-#./QuiltToNative -i $DOF_PRE -o $TEMP/native -cols $VIEW_COUNT -rows 1 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
-#mv $TEMP/native/output.png $TEMP/nativePre.png
-#./QuiltToNative -i $DOF_POST -o $TEMP/native -cols $VIEW_COUNT -rows 1 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
-#mv $TEMP/native/output.png $TEMP/nativePost.png
-#./QuiltToNative -i $DOF_HALF -o $TEMP/native -cols $VIEW_COUNT -rows 1 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
-#mv $TEMP/native/output.png $TEMP/nativeHalf.png
-#./QuiltToNative -i $DOF_REFERENCE -o $TEMP/native -cols $VIEW_COUNT -rows 1 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
-#mv $TEMP/native/output.png $TEMP/nativeRef.png
-./QuiltToNative -i $INPUT_PATH -o $TEMP/native -cols $VIEW_COUNT -rows 1 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+cp -f ../kernel.cl ./
+./QuiltToNative -i $DOF_PRE -o $TEMP/native -cols $COLS -rows $ROWS -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+mv $TEMP/native/output.png $TEMP/nativePre.png
+./QuiltToNative -i $DOF_POST -o $TEMP/native -cols $COLS -rows $ROWS -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+mv $TEMP/native/output.png $TEMP/nativePost.png
+./QuiltToNative -i $DOF_HALF -o $TEMP/native -cols $COLS -rows $ROWS -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+mv $TEMP/native/output.png $TEMP/nativeHalf.png
+./QuiltToNative -i $DOF_REFERENCE -o $TEMP/native -cols $COLS -rows $ROWS -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+mv $TEMP/native/output.png $TEMP/nativeRef.png
+./QuiltToNative -i $INPUT_PATH -o $TEMP/native -cols $COLS -rows $ROWS -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
 mv $TEMP/native/output.png $TEMP/nativeNodofRef.png
-./QuiltToNative -i $DECOMPRESSED_PATH -o $TEMP/native -cols $VIEW_COUNT -rows 1 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+./QuiltToNative -i $DECOMPRESSED_PATH -o $TEMP/native -cols $COLS -rows $ROWS -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
 mv $TEMP/native/output.png $TEMP/nativeNodofDec.png
-./QuiltToNative -i $DECOMPRESSED_PATH_JPG_ADA -o $TEMP/native -cols $VIEW_COUNT -rows 1 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+./QuiltToNative -i $DECOMPRESSED_PATH_JPG_ADA -o $TEMP/native -cols $COLS -rows $ROWS -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
 mv $TEMP/native/output.png $TEMP/nativeJpgAda.png
-./QuiltToNative -i $DECOMPRESSED_PATH_JPG_FULL -o $TEMP/native -cols $VIEW_COUNT -rows 1 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+./QuiltToNative -i $DECOMPRESSED_PATH_JPG_FULL -o $TEMP/native -cols $COLS -rows $ROWS -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
 mv $TEMP/native/output.png $TEMP/nativeJpgFull.png
-./QuiltToNative -i $DECOMPRESSED_PATH_JPG_REF -o $TEMP/native -cols $VIEW_COUNT -rows 1 -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+./QuiltToNative -i $DECOMPRESSED_PATH_JPG_FULL_THR -o $TEMP/native -cols $COLS -rows $ROWS -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
+mv $TEMP/native/output.png $TEMP/nativeJpgFullThr.png
+./QuiltToNative -i $DECOMPRESSED_PATH_JPG_REF -o $TEMP/native -cols $COLS -rows $ROWS -width 1536 -height 2048 -pitch 246.867 -tilt -0.185828 -center 0.350117 -viewPortion 1 -subp 0.000217014 -focus 0
 mv $TEMP/native/output.png $TEMP/nativeJpgRef.png
 cd -
 #QUALITY_NATIVE_PRE=$(./measureQuality.sh  $TEMP/nativePre.png $TEMP/nativeRef.png $FULL_MEASURE)
 #QUALITY_NATIVE_POST=$(./measureQuality.sh  $TEMP/nativePost.png $TEMP/nativeRef.png $FULL_MEASURE)
 #QUALITY_NATIVE_HALF=$(./measureQuality.sh  $TEMP/nativeHalf.png $TEMP/nativeRef.png $FULL_MEASURE)
-QUALITY_NATIVE_DEC=$(./measureQuality.sh  $TEMP/nativeNodofDec.png $TEMP/nativeNodofRef.png $FULL_MEASURE)
-QUALITY_NATIVE_DEC_JPG_ADA=$(./measureQuality.sh  $TEMP/nativeJpg.png $TEMP/nativeJpgRef.png $FULL_MEASURE)
-QUALITY_NATIVE_DEC_JPG_FULL=$(./measureQuality.sh  $TEMP/nativeJpgFull.png $TEMP/nativeJpgRef.png $FULL_MEASURE)
+#QUALITY_NATIVE_DEC=$(./measureQuality.sh  $TEMP/nativeNodofDec.png $TEMP/nativeNodofRef.png $FULL_MEASURE)
+#QUALITY_NATIVE_DEC_JPG_ADA=$(./measureQuality.sh  $TEMP/nativeJpg.png $TEMP/nativeJpgRef.png $FULL_MEASURE)
+#QUALITY_NATIVE_DEC_JPG_FULL=$(./measureQuality.sh  $TEMP/nativeJpgFull.png $TEMP/nativeJpgRef.png $FULL_MEASURE)
+#QUALITY_NATIVE_DEC_JPG_FULL_THR=$(./measureQuality.sh  $TEMP/nativeJpgFullThr.png $TEMP/nativeJpgRef.png $FULL_MEASURE)
 
+cp -f $TEMP/nativePre.png $OUTPUT_PATH/nativeDofPre.png
+cp -f $TEMP/nativePost.png $OUTPUT_PATH/nativeDofPost.png
+cp -f $TEMP/nativeHalf.png $OUTPUT_PATH/nativeDofHalf.png
+cp -f $TEMP/nativeJpgAda.png $OUTPUT_PATH/nativeJpgAda.png
+cp -f $TEMP/nativeJpgFull.png $OUTPUT_PATH/nativeJpgFull.png
+cp -f $TEMP/nativeJpgFullThr.png $OUTPUT_PATH/nativeJpgFullThr.png
+
+cp -f $TEMP/nativePre.png $OUTPUT_PATH/testing/pre/1pre.png
+cp -f $TEMP/nativePost.png $OUTPUT_PATH/testing/pre/0post.png
+cp -f $TEMP/nativePost.png $OUTPUT_PATH/testing/half/0post.png
+cp -f $TEMP/nativeHalf.png $OUTPUT_PATH/testing/half/1half.png
+cp -f $TEMP/nativeJpgAda.png $OUTPUT_PATH/testing/jpg/1ada.png
+cp -f $TEMP/nativeJpgFull.png $OUTPUT_PATH/testing/jpg/0full.png
+cp -f $TEMP/nativeJpgFullThr.png $OUTPUT_PATH/testing/jpgThr/0thr.png
+cp -f $TEMP/nativeJpgAda.png $OUTPUT_PATH/testing/jpgThr/1ada.png
+
+: '
 # Simulated metric
 mkdir $TEMP/simulatedPre
 mkdir $TEMP/simulatedPost
@@ -296,6 +390,7 @@ mkdir $TEMP/simulatedNodofRef
 mkdir $TEMP/simulatedNodofDec
 mkdir $TEMP/simulatedNodofDecJpgAda
 mkdir $TEMP/simulatedNodofDecJpgFull
+mkdir $TEMP/simulatedNodofDecJpgFullThr
 mkdir $TEMP/simulatedNodofDecJpgRef
 mkdir $TEMP/quiltForSim
 ./simulateViews.sh $DOF_PRE $TEMP/quiltForSim $TEMP/simulatedPre 
@@ -306,6 +401,7 @@ mkdir $TEMP/quiltForSim
 ./simulateViews.sh $DECOMPRESSED_PATH $TEMP/quiltForSim $TEMP/simulatedNodofDec
 ./simulateViews.sh $DECOMPRESSED_PATH_JPG_ADA $TEMP/quiltForSim $TEMP/simulatedNodofDecJpgAda
 ./simulateViews.sh $DECOMPRESSED_PATH_JPG_FULL $TEMP/quiltForSim $TEMP/simulatedNodofDecJpgFull
+./simulateViews.sh $DECOMPRESSED_PATH_JPG_FULL_THR $TEMP/quiltForSim $TEMP/simulatedNodofDecJpgFullThr
 ./simulateViews.sh $DECOMPRESSED_PATH_JPG_REF $TEMP/quiltForSim $TEMP/simulatedNodofDecJpgRef
 QUALITY_SIMULATED_PRE=$(./measureQuality.sh  $TEMP/simulatedPre/ $TEMP/simulatedRef/ $FULL_MEASURE)
 QUALITY_SIMULATED_POST=$(./measureQuality.sh  $TEMP/simulatedPost/ $TEMP/simulatedRef/ $FULL_MEASURE)
@@ -322,6 +418,8 @@ QUALITY_SIMULATED_DEC_JPG_ADA=$(./measureQuality.sh  $TEMP/simulatedNodofDecJpgA
 #QUALITY_DECODED_DEC=$(./measureQuality.sh $DECOMPRESSED_PATH $INPUT_PATH $FULL_MEASURE)
 #QUALITY_DECODED_JPG_ADA=$(./measureQuality.sh $DECOMPRESSED_PATH_JPG_ADA $DECOMPRESSED_PATH_JPG_REF $FULL_MEASURE)
 #QUALITY_DECODED_JPG_FULL=$(./measureQuality.sh $DECOMPRESSED_PATH_JPG_FULL $DECOMPRESSED_PATH_JPG_REF $FULL_MEASURE)
+#QUALITY_DECODED_JPG_FULL_THR=$(./measureQuality.sh $DECOMPRESSED_PATH_JPG_FULL_THR $DECOMPRESSED_PATH_JPG_REF $FULL_MEASURE)
+
 
 echo "Results"
 echo "Focus depth:"
@@ -358,6 +456,22 @@ echo -n "Native:"
 echo $QUALITY_NATIVE_DEC_JPG_FULL
 echo -n "Simulated:"
 echo $QUALITY_SIMULATED_DEC_JPG_FULL
+echo "____________"
+
+echo "No dof JPG strongthreshold:"
+echo -n "Size:"
+JPG_SIZE=$(stat --printf="%s" $TEMP/compressedJpgFullThr.mkv)
+echo $JPG_SIZE
+echo -n "Decoded:"
+echo $QUALITY_DECODED_JPG_FULL_THR
+echo -n "Blended partially:"
+echo $QUALITY_BLENDED_DEC_JPG_FULL_THR
+echo -n "Blended all:"
+echo $QUALITY_ALL_BLENDED_DEC_JPG_FULL_THR
+echo -n "Native:"
+echo $QUALITY_NATIVE_DEC_JPG_FULL_THR
+echo -n "Simulated:"
+echo $QUALITY_SIMULATED_DEC_JPG_FULL_THR
 echo "____________"
 
 echo "No dof JPG depth-aware"
