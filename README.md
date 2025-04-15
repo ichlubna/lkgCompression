@@ -25,7 +25,7 @@ Iterates over decompressed views, tests them on the display and produces the pho
 ./generateAllCompressedQuilts.sh ./dataset/ ./decompressedQuilts/  
 Creates quilts from all decompressed images  
 ./perceptualMeasurement.sh ./decompressedQuilts/ ./dirWithFilesOnTheDisplay  
-Runs the user study with random order of the quilts and updating the files on the display. The directoru with the files will contain two images which the user can view and change in any image viewer.  
+Runs the user study with random order of the quilts and updating the files on the display. The directory with the files will contain two images which the user can view and change in any image viewer.  
 ./measureSSIMNative.sh ./decompressedQuilts/ ./report.csv  
 Measures the quality of the decompressed quilts in the LKG native format. 
 ./saliencyFocus.sh ./dataset/scene/full   
