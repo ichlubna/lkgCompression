@@ -44,3 +44,17 @@ Can be run as:
 cd quiltToNative/build  
 cp ../../QuiltToNativeDisplaySimulatorKernel.cl ./kernel.cl; ./QuiltToNative -i /dataset/ -o ./result -cols 8 -rows 6 -width 19200 -height 2560  
 displaySimulation.py is a script that can be run in Blender to produce synthetic simulated views.  
+
+If you find this repository useful, please cite our work where you can also read more information about the method:
+```
+@article{chlubna2026,
+title = {Focus-aware compression and image quality metric for 3D displays},
+journal = {Signal Processing},
+volume = {238},
+pages = {110091},
+year = {2026},
+issn = {0165-1684},
+doi = {10.1016/j.sigpro.2025.110091},
+author = {T. Chlubna and M. Vlnas and D. Bařina and T. Milet and P. Zemčík}
+}
+```
