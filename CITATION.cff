@@ -1,10 +1,38 @@
-@article{chlubna2026,
-title = {Focus-aware compression and image quality metric for 3D displays},
-journal = {Signal Processing},
-volume = {238},
-pages = {110091},
-year = {2026},
-issn = {0165-1684},
-doi = {10.1016/j.sigpro.2025.110091},
-author = {T. Chlubna and M. Vlnas and D. Bařina and T. Milet and P. Zemčík}
-}
+cff-version: "1.2.0"
+authors:
+- family-names: Chlubna
+  given-names: T.
+- family-names: Vlnas
+  given-names: M.
+- family-names: Bařina
+  given-names: D.
+- family-names: Milet
+  given-names: T.
+- family-names: Zemčík
+  given-names: P.
+doi: 10.1016/j.sigpro.2025.110091
+message: If you use this software, please cite our article in the journal Signal Processing.
+preferred-citation:
+  authors:
+  - family-names: Chlubna
+    given-names: T.
+  - family-names: Vlnas
+    given-names: M.
+  - family-names: Bařina
+    given-names: D.
+  - family-names: Milet
+    given-names: T.
+  - family-names: Zemčík
+    given-names: P.
+  date-published: 2026
+  doi: 10.1016/j.sigpro.2025.110091
+  issn: 0165-1684
+  journal: Signal Processing
+  publisher:
+    name: Elsevier
+  start: 110091
+  title: "Focus-aware compression and image quality metric for 3D displays"
+  type: article
+  url: "https://doi.org/10.1016/j.sigpro.2025.110091"
+  volume: 238
+title: "Focus-aware compression and image quality metric for 3D displays"
